@@ -159,24 +159,34 @@ fn each_finding_is_an_event_keyed_by_its_code() {
     assert_eq!(codes.last().map(String::as_str), Some("SDC-CHECK"), "{codes:?}");
 }
 
-/// ⛔ `-q` and `-v` must SET something: a parsed-and-ignored flag fails silently.
+/// ⛔ The suite's verbosity contract (vyges-cli `docs/src/output-and-logging.md`): `-q` warn,
+/// `-qq` error, `-qqq` off, `-v` debug; a flag OVERRIDES `VYGES_LOG`; `VYGES_LOG` takes a name or
+/// `0`-`5`, `off` included. And a parsed-and-ignored flag fails silently, so every step is seen.
 #[test]
-fn quiet_and_verbose_move_the_event_floor() {
+fn verbosity_follows_the_suite_contract() {
     let mut a = vec!["check", "--sdc", "tests/data/no_out.sdc"];
     a.extend(DESIGN);
-    let base = sdc_env(&a, &[("VYGES_LOG_FORMAT", "json")]).2;
-    assert!(base.contains("SDC-UNCONSTRAINED-OUTPUT") && !base.contains("SDC-READ"), "{base}");
-    let mut q = a.clone();
-    q.push("-q");
-    let quiet = sdc_env(&q, &[("VYGES_LOG_FORMAT", "json")]).2;
-    assert!(!quiet.contains("SDC-UNCONSTRAINED-OUTPUT"), "{quiet}");
-    let mut v = a.clone();
-    v.push("-v");
-    let verbose = sdc_env(&v, &[("VYGES_LOG_FORMAT", "json")]).2;
-    assert!(verbose.contains("SDC-READ"), "{verbose}");
-    // an explicit VYGES_LOG beats the flag
-    let explicit = sdc_env(&q, &[("VYGES_LOG_FORMAT", "json"), ("VYGES_LOG", "debug")]).2;
-    assert!(explicit.contains("SDC-READ"), "{explicit}");
+    let run = |extra: &[&str], log: Option<&str>| {
+        let mut x = a.clone();
+        x.extend(extra);
+        let mut env = vec![("VYGES_LOG_FORMAT", "json")];
+        if let Some(l) = log {
+            env.push(("VYGES_LOG", l));
+        }
+        sdc_env(&x, &env).2
+    };
+    let warn = "SDC-UNCONSTRAINED-OUTPUT"; // a warning
+    let base = run(&[], None);
+    assert!(base.contains(warn) && !base.contains("SDC-READ"), "{base}");
+    assert!(run(&["-q"], None).contains(warn), "-q keeps warnings");
+    assert!(!run(&["-qq"], None).contains(warn), "-qq is errors only");
+    assert!(!run(&["-q", "--quiet"], None).contains(warn), "repeats combine, long form too");
+    assert_eq!(run(&["-qqq"], None).trim(), "", "-qqq is silent");
+    assert!(run(&["-v"], None).contains("SDC-READ"), "-v is debug");
+    assert!(run(&[], Some("debug")).contains("SDC-READ"), "VYGES_LOG alone sets it");
+    assert!(run(&[], Some("4")).contains("SDC-READ"), "numeric VYGES_LOG");
+    assert_eq!(run(&[], Some("off")).trim(), "", "VYGES_LOG=off is silent");
+    assert!(!run(&["-qq"], Some("debug")).contains(warn), "a flag beats VYGES_LOG");
 }
 
 #[test]

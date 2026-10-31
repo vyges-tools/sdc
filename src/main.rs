@@ -19,6 +19,7 @@ use vyges_loom::netlist::Netlist;
 use vyges_loom::sdc::{Sdc, SdcDesign};
 use vyges_loom::sdc_lint::{LintReport, Severity};
 use vyges_loom::sdc_write::WriteOpts;
+use vyges_loom::verbosity;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -51,8 +52,8 @@ OPTIONS:
   --design NAME         `write`: the current_design name to write
   --partial             `write`: write even when commands are dropped
   --json                emit the JSON result envelope on stdout
-  -q, --quiet           raise the event floor to `error` (VYGES_LOG)
-  -v, --verbose         lower it to `debug` (adds what was read: clocks, delays, exceptions)
+  -q, --quiet           fewer events (repeatable): -q warn, -qq error, -qqq none
+  -v, --verbose         more (repeatable): -v debug (adds what was read), -vv trace
   --describe            print the machine-readable tool contract (for `vyges mcp`)
   --bug-report          file a bug (central: vyges/community)
   --feature-request     request a feature (central)
@@ -60,7 +61,8 @@ OPTIONS:
   --star                star this tool on GitHub
 
 ENVIRONMENT:
-  VYGES_LOG             event floor: debug | info | warn | error (an explicit value beats -q/-v)
+  VYGES_LOG             level when no -q/-v is given: off|error|warn|info|debug|trace or 0-5
+                        (inherited from `vyges`, so it sets the whole command tree)
   VYGES_LOG_FORMAT      events on stderr as `json` (JSONL) or `text`; default text on a TTY, JSONL piped
 
 EVENTS (stderr, vyges-events):
@@ -207,6 +209,18 @@ type Severity_ = vyges_events::Severity;
 /// One event on the suite's channel (stderr; `VYGES_LOG` floor, `VYGES_LOG_FORMAT` form). The SDC
 /// file is the object every event names, so an agent can key a run's trail on it.
 fn event(sev: Severity_, code: &str, msg: String, sdc: &str) {
+    // The suite's level (`-q`/`-v`/`VYGES_LOG`, resolved in `run`) decides; vyges-events is told
+    // to pass everything, because its own floor cannot say `off`.
+    let level = match sev {
+        Severity_::Trace => verbosity::Level::Trace,
+        Severity_::Debug => verbosity::Level::Debug,
+        Severity_::Info => verbosity::Level::Info,
+        Severity_::Warn => verbosity::Level::Warn,
+        Severity_::Error => verbosity::Level::Error,
+    };
+    if !verbosity::enabled(level) {
+        return;
+    }
     vyges_events::emit(
         &vyges_events::Event::new("vyges-sdc", sev, msg)
             .with_code(code)
@@ -468,15 +482,24 @@ fn link(flag: &str) -> Option<(&'static str, &'static str)> {
 }
 
 fn run(args: Vec<String>) -> i32 {
-    // ⛔ `-q`/`-v` must land in `VYGES_LOG` before the first event: vyges-events reads its floor
-    // once. An explicit `VYGES_LOG` wins — the caller who set it meant it.
-    if std::env::var_os("VYGES_LOG").is_none() {
-        if args.iter().any(|a| a == "-q" || a == "--quiet") {
-            std::env::set_var("VYGES_LOG", "error");
-        } else if args.iter().any(|a| a == "-v" || a == "--verbose") {
-            std::env::set_var("VYGES_LOG", "debug");
+    // The suite's verbosity contract (vyges-cli `output-and-logging.md`), via the shared
+    // `vyges_loom::verbosity`: `-q` warn, `-qq` error, `-qqq` off; `-v` debug, `-vv` trace;
+    // repeatable, combining, and a flag OVERRIDES `VYGES_LOG` for this process.
+    let (mut v, mut q) = (0u8, 0u8);
+    for a in &args {
+        match a.as_str() {
+            "--verbose" => v += 1,
+            "--quiet" => q += 1,
+            s => {
+                v += verbosity::short_flag(s, b'v');
+                q += verbosity::short_flag(s, b'q');
+            }
         }
     }
+    verbosity::init(v, q);
+    // ⛔ Before the first event: vyges-events reads `VYGES_LOG` once. `event` filters by the
+    // level just resolved, so vyges-events passes all.
+    std::env::set_var("VYGES_LOG", "trace");
     if let Some((what, url)) = args.iter().find_map(|a| link(a)) {
         println!("{what}: {url}");
         return 0;

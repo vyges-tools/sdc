@@ -78,7 +78,9 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
 - a summary, `SDC-CHECK` or `SDC-WRITE`;
 - at debug, `SDC-READ`, which says what the file held.
 
-`-q` and `-v` move the level floor (`VYGES_LOG`); an explicit `VYGES_LOG` wins.
+`-q`/`-v` follow the suite's verbosity contract. They repeat: `-q` warnings, `-qq` errors,
+`-qqq` silent, `-v` debug, `-vv` trace. A flag overrides `VYGES_LOG`, which, inherited from
+`vyges`, sets the whole command tree.
 
 `vyges-sdc --help` lists every option. `--version` reports the build's commit.
 
