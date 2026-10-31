@@ -24,14 +24,14 @@ use vyges_loom::verbosity;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const USAGE: &str = "\
-vyges loom sdc — SDC constraint checking and writing
+vyges physical sdc — SDC constraint checking and writing
 
 USAGE:
-  vyges loom sdc check --sdc <f.sdc> --netlist <n.v|n.json> --lib <l.lib> [--lib ...]
+  vyges physical sdc check --sdc <f.sdc> --netlist <n.v|n.json> --lib <l.lib> [--lib ...]
                        [--metadata <vyges-metadata.json>] [--fail-on-warning] [--json]
-  vyges loom sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>]
+  vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>]
                        [--design NAME] [--partial] [--json]
-  vyges loom sdc --describe | --version | --help
+  vyges physical sdc --describe | --version | --help
 
 COMMANDS:
   check   completeness + consistency of the constraints against the design: I/O with no delay,

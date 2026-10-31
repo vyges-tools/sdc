@@ -11,8 +11,8 @@ nothing and quietly does nothing. `vyges-sdc check` looks for exactly these.
 ## Usage
 
 ```sh
-vyges loom sdc check --sdc design.sdc --netlist design.v --lib cells.lib [--metadata vyges-metadata.json] [--json]
-vyges loom sdc write --sdc design.sdc -o normalised.sdc [--netlist design.v --lib cells.lib] [--partial] [--json]
+vyges physical sdc check --sdc design.sdc --netlist design.v --lib cells.lib [--metadata vyges-metadata.json] [--json]
+vyges physical sdc write --sdc design.sdc -o normalised.sdc [--netlist design.v --lib cells.lib] [--partial] [--json]
 ```
 
 ### `check`
