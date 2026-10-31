@@ -1,0 +1,27 @@
+# One of each constraint `write` writes back; the README's "Constraints" list is checked against
+# what writing this file emits (tests/cli.rs, the_readme_lists_exactly_what_write_writes).
+set_units -time ns
+create_clock -name clk -period 10 [get_ports clk]
+create_generated_clock -name clk2 -source [get_ports clk] -divide_by 2 [get_pins r/Q]
+set_clock_uncertainty 0.1 [get_clocks clk]
+set_clock_latency 0.2 [get_clocks clk]
+set_clock_transition 0.05 [get_clocks clk]
+set_propagated_clock [get_clocks clk2]
+set_clock_groups -asynchronous -group clk -group clk2
+set_input_delay 1 -clock clk [get_ports din]
+set_output_delay 1 -clock clk [get_ports dout]
+set_input_transition 0.1 [get_ports din]
+set_load 0.01 [get_ports dout]
+set_driving_cell -lib_cell BUF [get_ports din]
+set_false_path -from [get_ports din] -to [get_ports dout]
+set_multicycle_path 2 -from [get_ports din] -to [get_ports dout]
+set_max_delay 5 -from [get_ports din] -to [get_ports dout]
+set_min_delay 0.1 -from [get_ports din] -to [get_ports dout]
+set_case_analysis 0 [get_ports din]
+set_logic_zero [get_ports din]
+set_logic_one [get_ports din]
+set_logic_dc [get_ports din]
+set_timing_derate -late 1.05
+set_max_transition 0.5 [current_design]
+set_max_fanout 10 [current_design]
+set_max_capacitance 0.2 [current_design]

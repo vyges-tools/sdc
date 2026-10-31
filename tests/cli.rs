@@ -213,3 +213,76 @@ fn help_documents_every_flag() {
         assert!(help.contains(f), "{f}");
     }
 }
+
+/// The commands `write` emits for `tests/data/supported.sdc`, one of each it writes.
+fn written_commands() -> std::collections::BTreeSet<String> {
+    let o = scratch("supported.sdc");
+    let (rc, _, err) = sdc(&["write", "--sdc", "tests/data/supported.sdc", "-o", &o, "-qqq"]);
+    assert_eq!(rc, 0, "{err}");
+    std::fs::read_to_string(&o)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+        .collect()
+}
+
+/// **The README's constraint list is exactly what `write` writes**: a command added to the
+/// writer and not to the README fails, and so does one the README names that is not written.
+#[test]
+fn the_readme_lists_exactly_what_write_writes() {
+    let readme = include_str!("../README.md");
+    let block = readme
+        .split("<!-- constraints-written:begin -->")
+        .nth(1)
+        .and_then(|r| r.split("<!-- constraints-written:end -->").next())
+        .expect("README constraints block");
+    let listed: std::collections::BTreeSet<String> = block
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect();
+    assert_eq!(listed, written_commands());
+}
+
+/// The README's other claims: synthesis directives are read past (what follows is written, and
+/// each is listed as not written), an unmodelled command is named, a command that is not SDC
+/// stops the read (exit 2, the command named), and both spellings of "every input but the
+/// clock" are read.
+#[test]
+fn the_readme_claims_about_reading_hold() {
+    let dir = scratch("claims");
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, text: &str, extra: &[&str]| {
+        let f = format!("{dir}/{name}.sdc");
+        std::fs::write(&f, format!("create_clock -name clk -period 10 [get_ports clk]\n{text}\n")).unwrap();
+        let o = format!("{dir}/{name}.out.sdc");
+        let mut a = vec!["write", "--sdc", f.as_str(), "-o", o.as_str(), "--json", "-qqq"];
+        a.extend(extra);
+        let (rc, out, err) = sdc(&a);
+        (rc, out, err, std::fs::read_to_string(&o).unwrap_or_default())
+    };
+    let synth = "set_size_only [get_cells u0]\nset_critical_range 0.2 [current_design]\nset_dont_touch_network [get_ports clk]\n\
+                 set_optimize_design\nset_scan_configuration -chain_count 1\nset_min_porosity 50 [current_design]\n\
+                 set_clock_gating_enable\nset_clock_gating_style -sequential_cell latch\nset_clock_gating_verification\n\
+                 set_timing_enable_verification\nset_load 0.01 [get_ports dout]";
+    let (rc, out, err, w) = run("synth", synth, &["--partial"]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(w.contains("set_load 0.01"), "{out}\n{w}");
+    assert_eq!(json(&out)["not_written"].as_array().map(Vec::len), Some(10), "{out}");
+    let (rc, out, _, _) = run("unmodelled", "set_disable_timing [get_ports din]", &[]);
+    assert_eq!(rc, 1);
+    assert!(json(&out)["not_written"].to_string().contains("set_disable_timing"), "{out}");
+    let (rc, out, err, _) = run("unknown", "derive_pll_clocks", &[]);
+    assert_eq!(rc, 2, "{err}");
+    assert!(json(&out)["error"].as_str().is_some_and(|e| e.contains("invalid command name \"derive_pll_clocks\"")), "{out}");
+    for (name, ports) in [
+        ("lsearch", "[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]"),
+        ("remove", "[remove_from_collection [all_inputs] clk]"),
+    ] {
+        let (rc, out, _, w) = run(name, &format!("set_input_delay 1 -clock clk {ports}"), &[]);
+        assert_eq!(rc, 0, "{name}: {out}");
+        assert!(w.contains("[lsearch -inline -all -not -exact [all_inputs] [get_ports {clk}]]"), "{name}: {w}");
+    }
+}

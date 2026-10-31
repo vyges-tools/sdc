@@ -63,6 +63,49 @@ Malformed constraints are refused when the file is read rather than guessed at. 
 `-period` given with a unit (`20ns`, `"1 MHz"`) is an error, because SDC periods are plain
 numbers in the file's time unit.
 
+## Constraints
+
+These are the constraints `write` writes back, read with the semantics of the reference timer.
+The list is checked against what the engine actually writes, so it cannot claim more than the
+code does.
+
+<!-- constraints-written:begin -->
+| Group | Commands |
+| --- | --- |
+| Clocks | `create_clock`, `create_generated_clock`, `set_clock_uncertainty`, `set_clock_latency`, `set_clock_transition`, `set_propagated_clock`, `set_clock_groups` |
+| Inputs and outputs | `set_input_delay`, `set_output_delay`, `set_input_transition`, `set_load`, `set_driving_cell` |
+| Timing exceptions | `set_false_path`, `set_multicycle_path`, `set_max_delay`, `set_min_delay` |
+| Constant logic | `set_case_analysis`, `set_logic_zero`, `set_logic_one`, `set_logic_dc` |
+| Derating and units | `set_timing_derate`, `set_units` |
+| Design rules | `set_max_transition`, `set_max_fanout`, `set_max_capacitance` |
+<!-- constraints-written:end -->
+
+**Objects.** `get_ports`, `get_pins`, `get_cells`, `get_nets` and `get_clocks` with their
+patterns, `all_inputs`, `all_outputs`, `all_clocks`, `all_registers`, and Tcl lists of these
+(`[list …]`, `[concat …]`). With a netlist, queries that select by property or connectivity
+(`-filter`, `-of_objects`, `-regexp`) are evaluated against the design. Every input or output but
+some is read in both common spellings:
+`[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]` and
+`[remove_from_collection [all_inputs] clk]`.
+
+**Tcl.** The subset constraint files use: `set` and variables (`$name`, `${name}`,
+`$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `expr`, and abbreviated command and
+option names, expanded as the reference expands them. Nothing is substituted inside braces, as
+in Tcl.
+
+**Synthesis directives** are recognised and read past: `set_size_only`, `set_critical_range`,
+`set_dont_touch_network`, `set_optimize_design`, `set_scan_configuration`, `set_min_porosity`,
+`set_clock_gating_enable`, `set_clock_gating_style`, `set_clock_gating_verification` and
+`set_timing_enable_verification`. They steer optimisation and change no timing result, so the
+constraints after them are applied. `write` lists each one as not written, since the file it
+writes is for timing; `--partial` writes the rest.
+
+**Everything else** that is valid SDC is read and reported by name: `set_disable_timing`,
+`set_clock_sense` and `group_path`, for example. `check` reports it, and `write` lists it as not
+written. A command that is not SDC or Tcl at all stops the read with an error that names it and
+the line it is on (exit 2). The reference timer stops there too, and a constraint file read only
+partly would otherwise be timed as if it were whole.
+
 ## Exit status and events
 
 | Exit | Meaning |
@@ -91,7 +134,7 @@ tools an agent can drive:
 - `sdc`, the check, which asserts `clean`;
 - `sdc.write`, which asserts `complete` and has the written SDC as its artifact.
 
-Once installed (`vyges install loom`), they are discoverable.
+Once installed (`vyges install physical`), they are discoverable.
 
 The checker and the writer are the `vyges-loom` implementations (`sdc_lint` and `Sdc::write`).
 The timing engine runs the same code, so `vyges-sdc check` and the timer always agree about what
