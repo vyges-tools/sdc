@@ -110,3 +110,96 @@ fn describe_parses_and_names_both_tools() {
     assert_eq!(v["name"], "sdc");
     assert_eq!(v["tools"][0]["name"], "sdc.write");
 }
+
+fn sdc_env(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_vyges-sdc"));
+    c.args(args).current_dir(env!("CARGO_MANIFEST_DIR")).env_remove("VYGES_LOG");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let o = c.output().expect("run vyges-sdc");
+    (
+        o.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// Exit 2 is "could not read the input", kept apart from exit 1, a finding about constraints
+/// that were read — a gate must not read a missing file as a constraint failure, or the reverse.
+#[test]
+fn an_unreadable_input_exits_2_with_an_input_event() {
+    let mut a = vec!["check", "--sdc", "tests/data/no-such.sdc", "--json"];
+    a.extend(DESIGN);
+    let (rc, out, err) = sdc_env(&a, &[("VYGES_LOG_FORMAT", "json")]);
+    assert_eq!(rc, 2);
+    assert_eq!(json(&out)["status"], "error");
+    assert!(err.contains("\"SDC-INPUT\""), "{err}");
+}
+
+#[test]
+fn fail_on_warning_turns_a_warning_into_exit_1() {
+    let mut a = vec!["check", "--sdc", "tests/data/no_out.sdc", "--fail-on-warning"];
+    a.extend(DESIGN);
+    assert_eq!(sdc(&a).0, 1);
+}
+
+/// Every finding is an event with its stable code; the summary follows.
+#[test]
+fn each_finding_is_an_event_keyed_by_its_code() {
+    let mut a = vec!["check", "--sdc", "tests/data/no_out.sdc"];
+    a.extend(DESIGN);
+    let (_, _, err) = sdc_env(&a, &[("VYGES_LOG_FORMAT", "json")]);
+    let codes: Vec<String> = err
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| v["code"].as_str().map(str::to_string))
+        .collect();
+    assert!(codes.contains(&"SDC-UNCONSTRAINED-OUTPUT".to_string()), "{codes:?}");
+    assert_eq!(codes.last().map(String::as_str), Some("SDC-CHECK"), "{codes:?}");
+}
+
+/// ⛔ `-q` and `-v` must SET something: a parsed-and-ignored flag fails silently.
+#[test]
+fn quiet_and_verbose_move_the_event_floor() {
+    let mut a = vec!["check", "--sdc", "tests/data/no_out.sdc"];
+    a.extend(DESIGN);
+    let base = sdc_env(&a, &[("VYGES_LOG_FORMAT", "json")]).2;
+    assert!(base.contains("SDC-UNCONSTRAINED-OUTPUT") && !base.contains("SDC-READ"), "{base}");
+    let mut q = a.clone();
+    q.push("-q");
+    let quiet = sdc_env(&q, &[("VYGES_LOG_FORMAT", "json")]).2;
+    assert!(!quiet.contains("SDC-UNCONSTRAINED-OUTPUT"), "{quiet}");
+    let mut v = a.clone();
+    v.push("-v");
+    let verbose = sdc_env(&v, &[("VYGES_LOG_FORMAT", "json")]).2;
+    assert!(verbose.contains("SDC-READ"), "{verbose}");
+    // an explicit VYGES_LOG beats the flag
+    let explicit = sdc_env(&q, &[("VYGES_LOG_FORMAT", "json"), ("VYGES_LOG", "debug")]).2;
+    assert!(explicit.contains("SDC-READ"), "{explicit}");
+}
+
+#[test]
+fn version_names_the_commit_and_links_point_at_the_central_tracker() {
+    let (rc, out, _) = sdc(&["--version"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("vyges-sdc ") && out.contains('('), "{out}");
+    let (rc, out, _) = sdc(&["--bug-report"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("github.com/vyges/community"), "{out}");
+    assert!(sdc(&["--star"]).1.contains("vyges-tools/sdc"));
+}
+
+/// The help documents every flag the engine reads (a flag only the code knows is a flag no
+/// user finds).
+#[test]
+fn help_documents_every_flag() {
+    let help = sdc(&["--help"]).1;
+    for f in [
+        "--sdc", "--netlist", "--lib", "--metadata", "--fail-on-warning", "--out", "--design",
+        "--partial", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
+        "--feature-request", "--sponsor", "--star", "VYGES_LOG", "VYGES_LOG_FORMAT", "EXIT STATUS",
+    ] {
+        assert!(help.contains(f), "{f}");
+    }
+}

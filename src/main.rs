@@ -25,17 +25,57 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const USAGE: &str = "\
 vyges loom sdc — SDC constraint checking and writing
 
-usage:
-  vyges loom sdc check --sdc <f.sdc> --netlist <n.v|n.json> --lib <l.lib> [--lib ...] [--metadata <vyges-metadata.json>] [--json]
-  vyges loom sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>] [--design NAME] [--partial] [--json]
-  vyges loom sdc --describe        structured tool contract (for `vyges mcp`)
-  vyges loom sdc --version | --help
+USAGE:
+  vyges loom sdc check --sdc <f.sdc> --netlist <n.v|n.json> --lib <l.lib> [--lib ...]
+                       [--metadata <vyges-metadata.json>] [--fail-on-warning] [--json]
+  vyges loom sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>]
+                       [--design NAME] [--partial] [--json]
+  vyges loom sdc --describe | --version | --help
 
-check   completeness + consistency of the constraints against the design; exit 1 on any error.
-write   the constraints back out as SDC. Refuses (exit 1, nothing written) when a command
-        would be dropped, listing each; --partial writes anyway, with a `# not written:` line
-        per dropped command. A netlist (+ Liberty) lets object queries that need the design
-        (-filter, -of_objects, -regexp) be evaluated instead of refused.
+COMMANDS:
+  check   completeness + consistency of the constraints against the design: I/O with no delay,
+          registers no clock reaches, exceptions naming no object or path, endpoint coverage,
+          and (with --metadata) the IP's declared clock domains.
+  write   the constraints back out as SDC. Refuses — nothing written — when a command would be
+          dropped, listing each; --partial writes anyway, with a `# not written:` line per
+          dropped command. A netlist (+ Liberty) lets object queries that need the design
+          (-filter, -of_objects, -regexp) be evaluated instead of refused.
+
+OPTIONS:
+  --sdc FILE            the SDC to read
+  --netlist FILE        gate-level Verilog, or Yosys JSON (.json); gzipped is read too
+  --lib FILE            Liberty (repeatable; merged in order)
+  --metadata FILE       vyges-metadata.json whose clock_domains `check` tests the SDC against
+  --fail-on-warning     `check`: exit 1 on a warning too, not only on an error
+  -o, --out FILE        `write`: the SDC to write (default stdout; with --json, the envelope's `text`)
+  --design NAME         `write`: the current_design name to write
+  --partial             `write`: write even when commands are dropped
+  --json                emit the JSON result envelope on stdout
+  -q, --quiet           raise the event floor to `error` (VYGES_LOG)
+  -v, --verbose         lower it to `debug` (adds what was read: clocks, delays, exceptions)
+  --describe            print the machine-readable tool contract (for `vyges mcp`)
+  --bug-report          file a bug (central: vyges/community)
+  --feature-request     request a feature (central)
+  --sponsor             sponsor Vyges (github.com/sponsors/vyges-ip)
+  --star                star this tool on GitHub
+
+ENVIRONMENT:
+  VYGES_LOG             event floor: debug | info | warn | error (an explicit value beats -q/-v)
+  VYGES_LOG_FORMAT      events on stderr as `json` (JSONL) or `text`; default text on a TTY, JSONL piped
+
+EVENTS (stderr, vyges-events):
+  SDC-READ     debug  what the SDC held: clocks, I/O delays, exceptions, ignored commands
+  SDC-<code>   per finding of `check` (e.g. SDC-UNCONSTRAINED-OUTPUT), at its severity
+  SDC-CHECK    the `check` summary
+  SDC-NOT-WRITTEN  per command `write` left out
+  SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
+  SDC-IPMETA   --metadata could not be read; the other checks still ran
+  SDC-INPUT    an input could not be read
+
+EXIT STATUS:
+  0  ok        check: no errors (and with --fail-on-warning no warnings); write: written
+  1  finding   check found an error (or a warning with --fail-on-warning); write REFUSED
+  2  error     usage, or an input that could not be read
 ";
 
 /// The `--describe` payload the mcp registry parses into typed MCP tools: `sdc` (check) and
@@ -51,7 +91,7 @@ fn describe() -> Value {
         ],
         "invocation": {
             "args_template": ["check", "--sdc", "{sdc}", "--netlist", "{netlist}", "--lib", "{lib}"],
-            "optional": [ { "arg": "metadata", "flag": "--metadata" } ],
+            "optional": [ { "arg": "metadata", "flag": "--metadata" }, { "arg": "fail_on_warning", "flag": "--fail-on-warning" } ],
             "emits_json": true
         },
         "inputs": {
@@ -61,7 +101,8 @@ fn describe() -> Value {
                 "sdc":      { "type": "string", "description": "the SDC constraints to check" },
                 "netlist":  { "type": "string", "description": "gate-level Verilog (or Yosys JSON) netlist the constraints apply to" },
                 "lib":      { "type": "string", "description": "Liberty library of the netlist's cells" },
-                "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" }
+                "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" },
+                "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" }
             }
         },
         "assertion": {
@@ -161,16 +202,48 @@ fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>) -> Result<Sdc, String>
     }
 }
 
-fn fail(want_json: bool, cmd: &str, msg: &str) -> i32 {
+type Severity_ = vyges_events::Severity;
+
+/// One event on the suite's channel (stderr; `VYGES_LOG` floor, `VYGES_LOG_FORMAT` form). The SDC
+/// file is the object every event names, so an agent can key a run's trail on it.
+fn event(sev: Severity_, code: &str, msg: String, sdc: &str) {
+    vyges_events::emit(
+        &vyges_events::Event::new("vyges-sdc", sev, msg)
+            .with_code(code)
+            .with_objects(vec![format!("sdc:{sdc}")]),
+    );
+}
+
+/// An input that could not be read: an event, the envelope (with --json), exit 2 — distinct from
+/// exit 1, which is a finding about constraints that WERE read.
+fn fail(want_json: bool, cmd: &str, sdc: &str, msg: &str) -> i32 {
+    event(Severity_::Error, "SDC-INPUT", format!("{cmd}: {msg}"), sdc);
+    // The event is the message (error is the top rank, so no floor hides it).
     if want_json {
         println!(
             "{:#}",
             json!({ "schema": "vyges-sdc/1.0", "command": cmd, "status": "error", "error": msg })
         );
-    } else {
-        eprintln!("vyges-sdc {cmd}: {msg}");
     }
-    1
+    2
+}
+
+/// What the reader kept, at debug: the first thing to look at when a check says less than expected.
+fn emit_read(sdc: &Sdc, path: &str) {
+    event(
+        Severity_::Debug,
+        "SDC-READ",
+        format!(
+            "read {path}: {} clock(s), {} input delay(s), {} output delay(s), {} exception(s), {} ignored command(s), {} unevaluated quer(ies)",
+            sdc.clocks.len(),
+            sdc.input_delays.len(),
+            sdc.output_delays.len(),
+            sdc.exceptions.len(),
+            sdc.ignored.len(),
+            sdc.unevaluated_queries.len()
+        ),
+        path,
+    );
 }
 
 fn render_check(r: &LintReport) -> String {
@@ -224,17 +297,18 @@ fn cmd_check(args: &[String]) -> i32 {
     }
     let nl = match load_netlist(nl_path) {
         Ok(n) => n,
-        Err(e) => return fail(want_json, "check", &e),
+        Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
     let lib = match load_libs(&lib_paths) {
         Ok(l) if !l.cells.is_empty() => l,
-        Ok(_) => return fail(want_json, "check", "no cells in any --lib"),
-        Err(e) => return fail(want_json, "check", &e),
+        Ok(_) => return fail(want_json, "check", sdc_path, "no cells in any --lib"),
+        Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
     let sdc = match load_sdc(sdc_path, Some((&nl, &lib))) {
         Ok(s) => s,
-        Err(e) => return fail(want_json, "check", &e),
+        Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
+    emit_read(&sdc, sdc_path);
     // A metadata file that cannot be read is said, and the other checks still run: an
     // optional input must not switch the whole check off.
     let meta = match opt(args, "--metadata") {
@@ -255,28 +329,44 @@ fn cmd_check(args: &[String]) -> i32 {
         None => None,
     };
     let r = vyges_loom::sdc_lint::lint_with_meta(&nl, &sdc, &lib, meta.as_ref());
+    // One event per finding, keyed by its stable code, so a trail can be clustered without
+    // parsing the report.
+    for f in &r.findings {
+        event(finding_severity(f.severity), &finding_code(f.code), f.message.clone(), sdc_path);
+    }
     let sev = if r.errors() > 0 {
-        vyges_events::Severity::Error
+        Severity_::Error
     } else if r.warnings() > 0 {
-        vyges_events::Severity::Warn
+        Severity_::Warn
     } else {
-        vyges_events::Severity::Info
+        Severity_::Info
     };
-    vyges_events::emit(
-        &vyges_events::Event::new(
-            "vyges-sdc",
-            sev,
-            format!("sdc check on {sdc_path}: {} error(s), {} warning(s)", r.errors(), r.warnings()),
-        )
-        .with_code("SDC-CHECK")
-        .with_objects(vec![format!("sdc:{sdc_path}")]),
+    event(
+        sev,
+        "SDC-CHECK",
+        format!("sdc check on {sdc_path}: {} error(s), {} warning(s)", r.errors(), r.warnings()),
+        sdc_path,
     );
     if want_json {
         println!("{:#}", check_json(&r, sdc_path));
     } else {
         print!("{}", render_check(&r));
     }
-    i32::from(r.findings.iter().any(|f| f.severity == Severity::Error))
+    let fail_on_warning = args.iter().any(|a| a == "--fail-on-warning");
+    i32::from(r.errors() > 0 || (fail_on_warning && r.warnings() > 0))
+}
+
+fn finding_severity(s: Severity) -> Severity_ {
+    match s {
+        Severity::Error => Severity_::Error,
+        Severity::Warning => Severity_::Warn,
+        Severity::Info => Severity_::Info,
+    }
+}
+
+/// `unconstrained-output` → `SDC-UNCONSTRAINED-OUTPUT`.
+fn finding_code(code: &str) -> String {
+    format!("SDC-{}", code.to_ascii_uppercase())
 }
 
 fn cmd_write(args: &[String]) -> i32 {
@@ -292,11 +382,11 @@ fn cmd_write(args: &[String]) -> i32 {
         Some(p) => {
             let nl = match load_netlist(p) {
                 Ok(n) => n,
-                Err(e) => return fail(want_json, "write", &e),
+                Err(e) => return fail(want_json, "write", sdc_path, &e),
             };
             let lib = match load_libs(&lib_paths) {
                 Ok(l) => l,
-                Err(e) => return fail(want_json, "write", &e),
+                Err(e) => return fail(want_json, "write", sdc_path, &e),
             };
             Some((nl, lib))
         }
@@ -304,8 +394,9 @@ fn cmd_write(args: &[String]) -> i32 {
     };
     let sdc = match load_sdc(sdc_path, design.as_ref().map(|(n, l)| (n, l))) {
         Ok(s) => s,
-        Err(e) => return fail(want_json, "write", &e),
+        Err(e) => return fail(want_json, "write", sdc_path, &e),
     };
+    emit_read(&sdc, sdc_path);
     let w = sdc.write(&WriteOpts {
         design: opt(args, "--design").map(str::to_string),
         header: Some(format!("SDC written by vyges-sdc {VERSION}")),
@@ -318,7 +409,7 @@ fn cmd_write(args: &[String]) -> i32 {
         match out {
             Some(o) => {
                 if let Err(e) = std::fs::write(o, &w.text) {
-                    return fail(want_json, "write", &format!("{o}: {e}"));
+                    return fail(want_json, "write", sdc_path, &format!("{o}: {e}"));
                 }
             }
             None if !want_json => print!("{}", w.text),
@@ -326,21 +417,19 @@ fn cmd_write(args: &[String]) -> i32 {
         }
     }
     let status = if refused { "refused" } else { "ok" };
-    vyges_events::emit(
-        &vyges_events::Event::new(
-            "vyges-sdc",
-            if complete { vyges_events::Severity::Info } else if refused { vyges_events::Severity::Error } else { vyges_events::Severity::Warn },
-            if complete {
-                format!("sdc write of {sdc_path}: complete")
-            } else if refused {
-                format!("sdc write of {sdc_path}: REFUSED, {} command(s) would be dropped (--partial writes anyway)", w.not_written.len())
-            } else {
-                format!("sdc write of {sdc_path}: PARTIAL, {} command(s) not written", w.not_written.len())
-            },
-        )
-        .with_code("SDC-WRITE")
-        .with_objects(vec![format!("sdc:{sdc_path}")]),
-    );
+    // Each dropped command is its own event, at warn — and at error when it made the write refuse.
+    let drop_sev = if refused { Severity_::Error } else { Severity_::Warn };
+    for n in &w.not_written {
+        event(drop_sev, "SDC-NOT-WRITTEN", n.clone(), sdc_path);
+    }
+    let (sev, msg) = if complete {
+        (Severity_::Info, format!("sdc write of {sdc_path}: complete"))
+    } else if refused {
+        (Severity_::Error, format!("sdc write of {sdc_path}: REFUSED, {} command(s) would be dropped (--partial writes anyway)", w.not_written.len()))
+    } else {
+        (Severity_::Warn, format!("sdc write of {sdc_path}: PARTIAL, {} command(s) not written", w.not_written.len()))
+    };
+    event(sev, "SDC-WRITE", msg, sdc_path);
     if want_json {
         let mut r = json!({
             "schema": "vyges-sdc/1.0",
@@ -356,30 +445,53 @@ fn cmd_write(args: &[String]) -> i32 {
             _ => {}
         }
         println!("{r:#}");
-    } else if !complete {
-        eprintln!(
-            "vyges-sdc write: {} {} command(s) not written:",
-            if refused { "REFUSED —" } else { "PARTIAL —" },
-            w.not_written.len()
-        );
-        for n in &w.not_written {
-            eprintln!("  {n}");
-        }
-        if refused {
-            eprintln!("  (nothing written; --partial writes the rest, with a `# not written:` line for each)");
-        }
     }
     i32::from(refused)
 }
 
+/// Community links, the same four every shipped engine carries. Bugs and features go to the
+/// CENTRAL `vyges/community` tracker, not this repo's issues: one queue for the whole suite.
+fn link(flag: &str) -> Option<(&'static str, &'static str)> {
+    Some(match flag {
+        "--bug-report" => (
+            "Report a bug",
+            "https://github.com/vyges/community/issues/new?template=bug_report_template.yaml",
+        ),
+        "--feature-request" => (
+            "Request a feature",
+            "https://github.com/vyges/community/issues/new?labels=enhancement",
+        ),
+        "--sponsor" => ("Sponsor Vyges", "https://github.com/sponsors/vyges-ip"),
+        "--star" => ("Star this tool", "https://github.com/vyges-tools/sdc"),
+        _ => return None,
+    })
+}
+
 fn run(args: Vec<String>) -> i32 {
+    // ⛔ `-q`/`-v` must land in `VYGES_LOG` before the first event: vyges-events reads its floor
+    // once. An explicit `VYGES_LOG` wins — the caller who set it meant it.
+    if std::env::var_os("VYGES_LOG").is_none() {
+        if args.iter().any(|a| a == "-q" || a == "--quiet") {
+            std::env::set_var("VYGES_LOG", "error");
+        } else if args.iter().any(|a| a == "-v" || a == "--verbose") {
+            std::env::set_var("VYGES_LOG", "debug");
+        }
+    }
+    if let Some((what, url)) = args.iter().find_map(|a| link(a)) {
+        println!("{what}: {url}");
+        return 0;
+    }
     match args.first().map(String::as_str) {
         Some("--describe") => {
             println!("{:#}", describe());
             0
         }
         Some("-V") | Some("--version") => {
-            println!("vyges-sdc {VERSION}");
+            // the version AND the commit: a release and a local build of it are different binaries
+            println!(
+                "vyges-sdc {VERSION} ({})\nCopyright (c) Vyges. Apache-2.0.",
+                env!("VYGES_GIT_SHA")
+            );
             0
         }
         None | Some("-h") | Some("--help") => {

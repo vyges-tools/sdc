@@ -63,6 +63,25 @@ Malformed constraints are refused when the file is read rather than guessed at. 
 `-period` given with a unit (`20ns`, `"1 MHz"`) is an error, because SDC periods are plain
 numbers in the file's time unit.
 
+## Exit status and events
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written |
+| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), or `write` refused |
+| 2 | usage, or an input that could not be read |
+
+Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a terminal
+(`VYGES_LOG_FORMAT=json|text` forces either). Each event names the SDC file as its object:
+- one `SDC-<finding>` per check finding, such as `SDC-UNCONSTRAINED-OUTPUT`;
+- one `SDC-NOT-WRITTEN` per dropped command;
+- a summary, `SDC-CHECK` or `SDC-WRITE`;
+- at debug, `SDC-READ`, which says what the file held.
+
+`-q` and `-v` move the level floor (`VYGES_LOG`); an explicit `VYGES_LOG` wins.
+
+`vyges-sdc --help` lists every option. `--version` reports the build's commit.
+
 ## As a Loom engine
 
 `vyges-sdc --describe` publishes a structured contract. `vyges mcp` then advertises two typed
