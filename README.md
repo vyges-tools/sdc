@@ -107,17 +107,34 @@ some is read in both common spellings:
 `[remove_from_collection [all_inputs] clk]`.
 
 **Tcl.** The subset constraint files use: `set` and variables (`$name`, `${name}`,
-`$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `expr`, `proc` (each call runs its
-body with its parameters bound and its own local variables), `source` (read in place, from the
-working directory and then from the reading file's directory), `puts`, and abbreviated command
-and option names, expanded as the reference expands them. Nothing is substituted inside braces,
-as in Tcl. The singular query spellings (`get_port`, `get_cell`, …) are the plural queries.
+`$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `switch`, `expr`, `proc` (each call
+runs its body with its parameters bound and its own local variables; `return` ends it, and a proc
+called inside `[…]` stands for the value it returns), `global`, `upvar` (the caller's variable,
+written back when the proc returns), `dict` (`create`, `set`, `get`, `exists`, `keys`, `values`,
+`size`, `merge`, `unset`, `lappend`, `append`, `incr` and `for`, in insertion order), `source`
+(read in place, from the working directory and then from the reading file's directory; a `return`
+at a file's top level ends that file), `puts`, and abbreviated command and option names, expanded
+as the reference expands them. Nothing is substituted inside braces, as in Tcl. The singular
+query spellings (`get_port`, `get_cell`, …) are the plural queries.
+
+**Files written for another tool.** Constraint files that DFT insertion and signoff tools write
+test which tool is reading them. `$synopsys_program_name` and `[get_app_var
+synopsys_program_name]` read as a signoff timer's name unless the flow defines the variable
+(`info exists` sees only what is defined). The signoff timer's take-back commands are read as the
+reference's: `remove_input_delay`, `remove_output_delay`, `remove_propagated_clock`,
+`remove_clock_uncertainty`, `remove_clock_latency`, `remove_clock_transition`,
+`remove_case_analysis`, `remove_clock_groups`, `remove_disable_timing`, `remove_data_check`,
+`remove_clock`, `remove_generated_clock`, `reset_path` and `reset_timing_derate`. Without
+`-clock`, `remove_input_delay` and `remove_output_delay` take back every delay on the objects,
+whatever its clock, as the signoff timer does.
 
 **Synthesis-tool collections.** `append_to_collection` and `add_to_collection` build object lists,
-and `get_object_name` gives their names. `get_designs`, `filter_collection`, `get_attribute`,
-`sizeof_collection`, `index_collection`, `sort_collection`, `all_fanin`, `all_fanout` and
-`foreach_in_collection` are recognised: the command using one is reported as not applied, and the
-constraints after it are still read.
+and `get_object_name` gives their names. A `foreach_in_collection` loop whose body hands each
+object to constraints as their object is those constraints on the whole collection.
+`get_designs`, `filter_collection`, `get_attribute` (also abbreviated, `get_attr`),
+`sizeof_collection`, `index_collection`, `sort_collection`, `all_fanin`, `all_fanout`, and a
+`foreach_in_collection` loop that needs its objects one by one are recognised: the command using
+one is reported as not applied, and the constraints after it are still read.
 
 **Synthesis directives** are recognised and read past: `set_size_only`, `set_critical_range`,
 `set_dont_touch_network`, `set_optimize_design`, `set_scan_configuration`, `set_min_porosity`,
