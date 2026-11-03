@@ -126,9 +126,11 @@ constraints after it are still read.
 constraints after them are applied. `write` lists each one as not written, since the file it
 writes is for timing; `--partial` writes the rest.
 
-**Everything else** that is valid SDC is read and reported by name: `set_data_check` and
-`group_path`, for example. `check` reports it, and `write` lists it as not
-written. A command that is not SDC or Tcl at all stops the read with an error that names it and
+**Everything else** the reference reads is read too. Constraints no timer here applies yet
+(`set_data_check`, `group_path`, `set_min_pulse_width`, `set_max_time_borrow`, the wire-load and
+operating-condition commands, for example) are kept and written back as they were read. A command
+the reference runs but that is no constraint (a tool setting such as `set_assigned_delay`) is
+reported by name: `check` reports it, and `write` lists it as not written. A command that is not SDC or Tcl at all stops the read with an error that names it and
 the line it is on (exit 2). The reference timer stops there too, and a constraint file read only
 partly would otherwise be timed as if it were whole.
 
