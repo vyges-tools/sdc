@@ -49,7 +49,10 @@ COMMANDS:
 
 OPTIONS:
   --sdc FILE            the SDC to read
-  --netlist FILE        gate-level Verilog, or Yosys JSON (.json); gzipped is read too
+  --netlist FILE        gate-level Verilog, or Yosys JSON (.json); gzipped is read too. A
+                        hierarchical netlist is flattened, as the timer reads it
+  --top NAME            the netlist's top module, when the file has more than one candidate
+  --keep MODULE         a module kept as a block, not flattened (repeatable)
   --lib FILE            Liberty (repeatable; merged in order)
   --metadata FILE       vyges-metadata.json whose clock_domains `check` tests the SDC against
   --define NAME=VALUE   a Tcl variable set before the SDC is read (repeatable): what a flow's
@@ -79,6 +82,7 @@ EVENTS (stderr, vyges-events):
   SDC-NOT-WRITTEN  per command `write` left out
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
   SDC-IPMETA   --metadata could not be read; the other checks still ran
+  SDC-FLATTEN  a hierarchical netlist was flattened, and anything it found (undefined cells)
   SDC-INPUT    an input could not be read
 
 EXIT STATUS:
@@ -178,16 +182,33 @@ fn opts<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-fn load_netlist(path: &str) -> Result<Netlist, String> {
-    let res = if std::path::Path::new(path)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("json"))
-    {
-        vyges_loom::yosys_json::load(path).map_err(|e| e.to_string())
-    } else {
-        vyges_loom::netlist::load(path).map_err(|e| e.to_string())
+/// The netlist as one flat top: a hierarchical Verilog netlist is flattened (`--top` names the
+/// top when the file has several; `--keep` modules stay blocks), as the timer reads it, so a
+/// constraint on `u_core/u_alu/…` names an object that exists. Flattening a flat netlist
+/// changes nothing. What flattening found (cells no library defines, kept names the file lacks)
+/// is an event.
+fn load_netlist(path: &str, args: &[String], lib: &Lib, sdc: &str) -> Result<Netlist, String> {
+    if std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+        return vyges_loom::yosys_json::load(path).map_err(|e| format!("{path}: {e}"));
+    }
+    let d = vyges_loom::netlist::load_compact_opt(path, opt(args, "--top")).map_err(|e| e.to_string())?;
+    let fo = vyges_loom::netlist::FlattenOptions {
+        keep: opts(args, "--keep").iter().map(|k| k.to_string()).collect(),
+        library_cells: (!lib.cells.is_empty()).then(|| lib.cells.keys().cloned().collect()),
     };
-    res.map_err(|e| format!("{path}: {e}"))
+    let (flat, report) = d.flatten(&fo);
+    if report.expanded > 0 {
+        event(
+            Severity_::Info,
+            "SDC-FLATTEN",
+            format!("{path}: top {} flattened: {} module instance(s) expanded, {} leaf instance(s)", report.top, report.expanded, report.leaves),
+            sdc,
+        );
+    }
+    if let Some(h) = report.health() {
+        event(Severity_::Warn, "SDC-FLATTEN", format!("{path}: {h}"), sdc);
+    }
+    Ok(flat.top_netlist())
 }
 
 /// Every library, merged in order (the first one's thresholds rule ports).
@@ -353,13 +374,13 @@ fn cmd_check(args: &[String]) -> i32 {
         eprintln!("vyges-sdc check: --lib <l.lib> is required (it says which cells are registers)");
         return 2;
     }
-    let nl = match load_netlist(nl_path) {
-        Ok(n) => n,
-        Err(e) => return fail(want_json, "check", sdc_path, &e),
-    };
     let lib = match load_libs(&lib_paths) {
         Ok(l) if !l.cells.is_empty() => l,
         Ok(_) => return fail(want_json, "check", sdc_path, "no cells in any --lib"),
+        Err(e) => return fail(want_json, "check", sdc_path, &e),
+    };
+    let nl = match load_netlist(nl_path, args, &lib, sdc_path) {
+        Ok(n) => n,
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
     let sdc = match load_sdc(sdc_path, Some((&nl, &lib)), &ro) {
@@ -451,12 +472,12 @@ fn cmd_write(args: &[String]) -> i32 {
     let lib_paths = opts(args, "--lib");
     let design = match opt(args, "--netlist") {
         Some(p) => {
-            let nl = match load_netlist(p) {
-                Ok(n) => n,
-                Err(e) => return fail(want_json, "write", sdc_path, &e),
-            };
             let lib = match load_libs(&lib_paths) {
                 Ok(l) => l,
+                Err(e) => return fail(want_json, "write", sdc_path, &e),
+            };
+            let nl = match load_netlist(p, args, &lib, sdc_path) {
+                Ok(n) => n,
                 Err(e) => return fail(want_json, "write", sdc_path, &e),
             };
             Some((nl, lib))

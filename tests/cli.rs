@@ -316,3 +316,17 @@ fn a_define_is_set_before_the_file_is_read() {
     let (rc, _, _) = sdc(&["check", "--sdc", &f, "--define", "F"]);
     assert_eq!(rc, 2);
 }
+
+/// A hierarchical netlist is flattened before checking, as the timer reads it: an exception on
+/// a pin inside a block (`u_b/r/D`) names an object that exists, and every register is clocked.
+#[test]
+fn a_hierarchical_netlist_is_flattened_for_check() {
+    let (rc, out, err) = sdc(&["check", "--sdc", "tests/data/hier.sdc", "--netlist", "tests/data/hier.v", "--lib", "tests/data/seq.lib", "--json", "-qqq"]);
+    assert_eq!(rc, 0, "{out}\n{err}");
+    let v = json(&out);
+    assert_eq!(v["endpoint_coverage_pct"], 100.0, "{v}");
+    assert!(!v["findings"].to_string().contains("exception-"), "{v}");
+    // a module kept as a block leaves its pins unknown to the design: the exception names nothing
+    let (_, out, _) = sdc(&["check", "--sdc", "tests/data/hier.sdc", "--netlist", "tests/data/hier.v", "--lib", "tests/data/seq.lib", "--keep", "stage", "--json", "-qqq"]);
+    assert!(json(&out)["findings"].to_string().contains("exception-unknown-object"), "{out}");
+}

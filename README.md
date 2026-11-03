@@ -37,6 +37,11 @@ information when it does not (a synthesis directive).
 **Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
 periods and duplicate names, plus one note that the design checks did not run.
 
+**Hierarchical netlists** are flattened before checking, as the timer reads them, so a constraint
+on `u_core/u_alu/...` finds its object. `--top NAME` names the top module when the file has more
+than one candidate (otherwise the read is refused, listing them), and `--keep MODULE` keeps a
+module as a block.
+
 **`--define NAME=VALUE`** (repeatable) sets a Tcl variable before the file is read. Synthesis flows
 often define names such as a driving cell or a period factor in a setup script that the constraint
 file only uses.
