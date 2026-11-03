@@ -82,12 +82,12 @@ fn write_refuses_when_a_command_would_be_dropped() {
     let v = json(&out);
     assert_eq!(v["status"], "refused");
     assert_eq!(v["complete"], false);
-    assert!(v["not_written"].to_string().contains("set_disable_timing"), "{v}");
+    assert!(v["not_written"].to_string().contains("set_data_check"), "{v}");
     assert!(!std::path::Path::new(&o).exists(), "a refused write must leave no file");
     // the text form says it too, on stderr
     let (rc, _, err) = sdc(&["write", "--sdc", "tests/data/unmodelled.sdc", "-o", &o]);
     assert_eq!(rc, 1);
-    assert!(err.contains("REFUSED") && err.contains("set_disable_timing"), "{err}");
+    assert!(err.contains("REFUSED") && err.contains("set_data_check"), "{err}");
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn partial_write_marks_every_dropped_command_in_the_file() {
     assert_eq!(v["status"], "ok");
     assert_eq!(v["complete"], false);
     let text = std::fs::read_to_string(&o).unwrap();
-    assert!(text.contains("# not written:") && text.contains("set_disable_timing"), "{text}");
+    assert!(text.contains("# not written:") && text.contains("set_data_check"), "{text}");
 }
 
 #[test]
@@ -271,9 +271,9 @@ fn the_readme_claims_about_reading_hold() {
     assert_eq!(rc, 0, "{err}");
     assert!(w.contains("set_load 0.01"), "{out}\n{w}");
     assert_eq!(json(&out)["not_written"].as_array().map(Vec::len), Some(10), "{out}");
-    let (rc, out, _, _) = run("unmodelled", "set_disable_timing [get_ports din]", &[]);
+    let (rc, out, _, _) = run("unmodelled", "set_data_check -from [get_ports din] -to [get_ports dout] 0.1", &[]);
     assert_eq!(rc, 1);
-    assert!(json(&out)["not_written"].to_string().contains("set_disable_timing"), "{out}");
+    assert!(json(&out)["not_written"].to_string().contains("set_data_check"), "{out}");
     let (rc, out, err, _) = run("unknown", "derive_pll_clocks", &[]);
     assert_eq!(rc, 2, "{err}");
     assert!(json(&out)["error"].as_str().is_some_and(|e| e.contains("invalid command name \"derive_pll_clocks\"")), "{out}");
@@ -285,4 +285,34 @@ fn the_readme_claims_about_reading_hold() {
         assert_eq!(rc, 0, "{name}: {out}");
         assert!(w.contains("[lsearch -inline -all -not -exact [all_inputs] [get_ports {clk}]]"), "{name}: {w}");
     }
+}
+
+/// Without a netlist, `check` runs the checks the file alone supports: a clean file exits 0 with a
+/// note that the design checks did not run; a timing command not applied is an error (exit 1).
+#[test]
+fn check_without_a_netlist_reports_what_was_not_applied() {
+    let (rc, out, err) = sdc(&["check", "--sdc", "tests/data/clean.sdc", "--json", "-qqq"]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(json(&out)["findings"].to_string().contains("design-checks-not-run"), "{out}");
+    let (rc, out, _) = sdc(&["check", "--sdc", "tests/data/unmodelled.sdc", "--json", "-qqq"]);
+    assert_eq!(rc, 1, "{out}");
+    let v = json(&out);
+    assert!(v["findings"].to_string().contains("sdc-not-applied") && v["findings"].to_string().contains("set_data_check"), "{v}");
+}
+
+/// `--define NAME=VALUE` sets a variable before the file is read: a period the flow supplies.
+#[test]
+fn a_define_is_set_before_the_file_is_read() {
+    let dir = scratch("define");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/d.sdc");
+    std::fs::write(&f, "create_clock -name clk -period [expr 10*$F] [get_ports clk]\n").unwrap();
+    let (rc, _, _) = sdc(&["check", "--sdc", &f, "-qqq"]);
+    assert_eq!(rc, 2);
+    let o = format!("{dir}/d.out.sdc");
+    let (rc, _, err) = sdc(&["write", "--sdc", &f, "-o", &o, "--define", "F=0.5", "-qqq"]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(std::fs::read_to_string(&o).unwrap().contains("-period 5"));
+    let (rc, _, _) = sdc(&["check", "--sdc", &f, "--define", "F"]);
+    assert_eq!(rc, 2);
 }

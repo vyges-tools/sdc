@@ -4,6 +4,8 @@
 //!   (+ Liberty, + optionally the IP's declared clock domains): an unconstrained output, a
 //!   clock on a port that drives nothing, an exception that names no real path. A timer
 //!   computes timing on whatever constraints it is given; this says whether they are whole.
+//!   Without a netlist it checks what the file alone can say: every command it did not apply
+//!   (an error when the command affects timing), clock periods, duplicate names.
 //! - `write` reads an SDC into the shared model and writes it back out — normalised, in the
 //!   order a timer writes its own database. **What is not written is said**: a command the
 //!   model does not carry makes `write` refuse (exit 1, every dropped command listed) unless
@@ -16,7 +18,7 @@
 use serde_json::{json, Value};
 use vyges_loom::liberty::{Lib, LibOpts};
 use vyges_loom::netlist::Netlist;
-use vyges_loom::sdc::{Sdc, SdcDesign};
+use vyges_loom::sdc::{ReadOpts, Sdc, SdcDesign};
 use vyges_loom::sdc_lint::{LintReport, Severity};
 use vyges_loom::sdc_write::WriteOpts;
 use vyges_loom::verbosity;
@@ -27,16 +29,19 @@ const USAGE: &str = "\
 vyges physical sdc — SDC constraint checking and writing
 
 USAGE:
-  vyges physical sdc check --sdc <f.sdc> --netlist <n.v|n.json> --lib <l.lib> [--lib ...]
-                       [--metadata <vyges-metadata.json>] [--fail-on-warning] [--json]
+  vyges physical sdc check --sdc <f.sdc> [--netlist <n.v|n.json> --lib <l.lib> [--lib ...]]
+                       [--metadata <vyges-metadata.json>] [--define NAME=VALUE ...]
+                       [--fail-on-warning] [--json]
   vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>]
-                       [--design NAME] [--partial] [--json]
+                       [--define NAME=VALUE ...] [--design NAME] [--partial] [--json]
   vyges physical sdc --describe | --version | --help
 
 COMMANDS:
   check   completeness + consistency of the constraints against the design: I/O with no delay,
           registers no clock reaches, exceptions naming no object or path, endpoint coverage,
-          and (with --metadata) the IP's declared clock domains.
+          and (with --metadata) the IP's declared clock domains. Without --netlist: the checks
+          the file alone supports, and every command not applied (an error when it affects
+          timing: a constraint the timer will not see is a hole, not a detail).
   write   the constraints back out as SDC. Refuses — nothing written — when a command would be
           dropped, listing each; --partial writes anyway, with a `# not written:` line per
           dropped command. A netlist (+ Liberty) lets object queries that need the design
@@ -47,6 +52,8 @@ OPTIONS:
   --netlist FILE        gate-level Verilog, or Yosys JSON (.json); gzipped is read too
   --lib FILE            Liberty (repeatable; merged in order)
   --metadata FILE       vyges-metadata.json whose clock_domains `check` tests the SDC against
+  --define NAME=VALUE   a Tcl variable set before the SDC is read (repeatable): what a flow's
+                        setup script defines and its constraint files only use
   --fail-on-warning     `check`: exit 1 on a warning too, not only on an error
   -o, --out FILE        `write`: the SDC to write (default stdout; with --json, the envelope's `text`)
   --design NAME         `write`: the current_design name to write
@@ -92,17 +99,22 @@ fn describe() -> Value {
             "input_hash covers the argument vector, not the content of the SDC, netlist, Liberty or metadata files it names."
         ],
         "invocation": {
-            "args_template": ["check", "--sdc", "{sdc}", "--netlist", "{netlist}", "--lib", "{lib}"],
-            "optional": [ { "arg": "metadata", "flag": "--metadata" }, { "arg": "fail_on_warning", "flag": "--fail-on-warning" } ],
+            "args_template": ["check", "--sdc", "{sdc}"],
+            "optional": [
+                { "arg": "netlist", "flag": "--netlist" },
+                { "arg": "lib", "flag": "--lib" },
+                { "arg": "metadata", "flag": "--metadata" },
+                { "arg": "fail_on_warning", "flag": "--fail-on-warning" }
+            ],
             "emits_json": true
         },
         "inputs": {
             "type": "object",
-            "required": ["sdc", "netlist", "lib"],
+            "required": ["sdc"],
             "properties": {
                 "sdc":      { "type": "string", "description": "the SDC constraints to check" },
-                "netlist":  { "type": "string", "description": "gate-level Verilog (or Yosys JSON) netlist the constraints apply to" },
-                "lib":      { "type": "string", "description": "Liberty library of the netlist's cells" },
+                "netlist":  { "type": "string", "description": "gate-level Verilog (or Yosys JSON) netlist the constraints apply to; without it only the checks the file alone supports run" },
+                "lib":      { "type": "string", "description": "Liberty library of the netlist's cells (required with netlist)" },
                 "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" },
                 "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" }
             }
@@ -191,14 +203,30 @@ fn load_libs(paths: &[&str]) -> Result<Lib, String> {
     Ok(lib.unwrap_or_default())
 }
 
+/// How the SDC is read: `--define NAME=VALUE` variables, set in order before it, and its own
+/// directory for a relative `source`.
+fn read_opts(args: &[String], path: &str) -> Result<ReadOpts, String> {
+    let mut defines = Vec::new();
+    for d in opts(args, "--define") {
+        let Some((n, v)) = d.split_once('=') else {
+            return Err(format!("--define {d}: expected NAME=VALUE"));
+        };
+        defines.push((n.trim().to_string(), v.to_string()));
+    }
+    let base_dir = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
+    Ok(ReadOpts { defines, base_dir })
+}
+
 /// Read the SDC; when it holds object queries that need the design and a netlist was given,
 /// read it again with the design so they are evaluated rather than refused.
-fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>) -> Result<Sdc, String> {
-    let plain = Sdc::load(path).map_err(|e| format!("{path}: {e}"))?;
+fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>, ro: &ReadOpts) -> Result<Sdc, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let plain = Sdc::parse_opts(&text, ro).map_err(|e| format!("{path}: {e}"))?;
     match design {
         Some((nl, lib)) if !plain.unevaluated_queries.is_empty() => {
             let d = SdcDesign::from_netlist(nl, Some(lib));
-            Sdc::load_with(path, &d).map_err(|e| format!("{path}: {e}"))
+            Sdc::parse_with_opts(&text, &d, ro).map_err(|e| format!("{path}: {e}"))
         }
         _ => Ok(plain),
     }
@@ -300,9 +328,25 @@ fn check_json(r: &LintReport, sdc: &str) -> Value {
 
 fn cmd_check(args: &[String]) -> i32 {
     let want_json = args.iter().any(|a| a == "--json");
-    let (Some(sdc_path), Some(nl_path)) = (opt(args, "--sdc"), opt(args, "--netlist")) else {
-        eprintln!("vyges-sdc check: --sdc <f.sdc> and --netlist <n.v> are required");
+    let Some(sdc_path) = opt(args, "--sdc") else {
+        eprintln!("vyges-sdc check: --sdc <f.sdc> is required");
         return 2;
+    };
+    let ro = match read_opts(args, sdc_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("vyges-sdc check: {e}");
+            return 2;
+        }
+    };
+    // Without a design: what the file alone can say, and every command it did not apply.
+    let Some(nl_path) = opt(args, "--netlist") else {
+        let sdc = match load_sdc(sdc_path, None, &ro) {
+            Ok(s) => s,
+            Err(e) => return fail(want_json, "check", sdc_path, &e),
+        };
+        emit_read(&sdc, sdc_path);
+        return report_check(args, &vyges_loom::sdc_lint::lint_without_design(&sdc), sdc_path);
     };
     let lib_paths = opts(args, "--lib");
     if lib_paths.is_empty() {
@@ -318,7 +362,7 @@ fn cmd_check(args: &[String]) -> i32 {
         Ok(_) => return fail(want_json, "check", sdc_path, "no cells in any --lib"),
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
-    let sdc = match load_sdc(sdc_path, Some((&nl, &lib))) {
+    let sdc = match load_sdc(sdc_path, Some((&nl, &lib)), &ro) {
         Ok(s) => s,
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
@@ -343,6 +387,12 @@ fn cmd_check(args: &[String]) -> i32 {
         None => None,
     };
     let r = vyges_loom::sdc_lint::lint_with_meta(&nl, &sdc, &lib, meta.as_ref());
+    report_check(args, &r, sdc_path)
+}
+
+/// A check's events, its report (text or `--json`), and its exit status.
+fn report_check(args: &[String], r: &LintReport, sdc_path: &str) -> i32 {
+    let want_json = args.iter().any(|a| a == "--json");
     // One event per finding, keyed by its stable code, so a trail can be clustered without
     // parsing the report.
     for f in &r.findings {
@@ -362,9 +412,9 @@ fn cmd_check(args: &[String]) -> i32 {
         sdc_path,
     );
     if want_json {
-        println!("{:#}", check_json(&r, sdc_path));
+        println!("{:#}", check_json(r, sdc_path));
     } else {
-        print!("{}", render_check(&r));
+        print!("{}", render_check(r));
     }
     let fail_on_warning = args.iter().any(|a| a == "--fail-on-warning");
     i32::from(r.errors() > 0 || (fail_on_warning && r.warnings() > 0))
@@ -391,6 +441,13 @@ fn cmd_write(args: &[String]) -> i32 {
         return 2;
     };
     let out = opt(args, "-o").or_else(|| opt(args, "--out"));
+    let ro = match read_opts(args, sdc_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("vyges-sdc write: {e}");
+            return 2;
+        }
+    };
     let lib_paths = opts(args, "--lib");
     let design = match opt(args, "--netlist") {
         Some(p) => {
@@ -406,7 +463,7 @@ fn cmd_write(args: &[String]) -> i32 {
         }
         None => None,
     };
-    let sdc = match load_sdc(sdc_path, design.as_ref().map(|(n, l)| (n, l))) {
+    let sdc = match load_sdc(sdc_path, design.as_ref().map(|(n, l)| (n, l)), &ro) {
         Ok(s) => s,
         Err(e) => return fail(want_json, "write", sdc_path, &e),
     };

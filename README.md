@@ -11,8 +11,8 @@ nothing and quietly does nothing. `vyges-sdc check` looks for exactly these.
 ## Usage
 
 ```sh
-vyges physical sdc check --sdc design.sdc --netlist design.v --lib cells.lib [--metadata vyges-metadata.json] [--json]
-vyges physical sdc write --sdc design.sdc -o normalised.sdc [--netlist design.v --lib cells.lib] [--partial] [--json]
+vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib] [--metadata vyges-metadata.json] [--define NAME=VALUE ...] [--json]
+vyges physical sdc write --sdc design.sdc -o normalised.sdc [--netlist design.v --lib cells.lib] [--define NAME=VALUE ...] [--partial] [--json]
 ```
 
 ### `check`
@@ -28,6 +28,18 @@ registers:
 - **Declared clock domains:** given `--metadata`, the IP's `clock_domains` from
   `vyges-metadata.json` are checked against the SDC's clocks. A three-clock IP with one
   `create_clock` passes timing and times only part of the design; this catches it.
+
+Every check also reports each command that was read but **not applied**: one the model does not
+carry, one it refused, or one whose object query it could not evaluate. Such a command is an
+error when it affects timing (a constraint the timer never sees is a hole in the constraints) and
+information when it does not (a synthesis directive).
+
+**Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
+periods and duplicate names, plus one note that the design checks did not run.
+
+**`--define NAME=VALUE`** (repeatable) sets a Tcl variable before the file is read. Synthesis flows
+often define names such as a driving cell or a period factor in a setup script that the constraint
+file only uses.
 
 The exit code is 1 when there is any error. Warnings are reported and leave it at 0.
 
@@ -78,6 +90,7 @@ code does.
 | Constant logic | `set_case_analysis`, `set_logic_zero`, `set_logic_one`, `set_logic_dc` |
 | Derating and units | `set_timing_derate`, `set_units` |
 | Design rules | `set_max_transition`, `set_max_fanout`, `set_max_capacitance` |
+| Arcs and senses | `set_disable_timing`, `unset_disable_timing`, `set_sense`, `set_clock_sense`, `set_disable_clock_gating_check`, `unset_disable_clock_gating_check` |
 <!-- constraints-written:end -->
 
 **Objects.** `get_ports`, `get_pins`, `get_cells`, `get_nets` and `get_clocks` with their
@@ -89,9 +102,17 @@ some is read in both common spellings:
 `[remove_from_collection [all_inputs] clk]`.
 
 **Tcl.** The subset constraint files use: `set` and variables (`$name`, `${name}`,
-`$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `expr`, and abbreviated command and
-option names, expanded as the reference expands them. Nothing is substituted inside braces, as
-in Tcl.
+`$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `expr`, `proc` (each call runs its
+body with its parameters bound and its own local variables), `source` (read in place, from the
+working directory and then from the reading file's directory), `puts`, and abbreviated command
+and option names, expanded as the reference expands them. Nothing is substituted inside braces,
+as in Tcl. The singular query spellings (`get_port`, `get_cell`, …) are the plural queries.
+
+**Synthesis-tool collections.** `append_to_collection` and `add_to_collection` build object lists,
+and `get_object_name` gives their names. `get_designs`, `filter_collection`, `get_attribute`,
+`sizeof_collection`, `index_collection`, `sort_collection`, `all_fanin`, `all_fanout` and
+`foreach_in_collection` are recognised: the command using one is reported as not applied, and the
+constraints after it are still read.
 
 **Synthesis directives** are recognised and read past: `set_size_only`, `set_critical_range`,
 `set_dont_touch_network`, `set_optimize_design`, `set_scan_configuration`, `set_min_porosity`,
@@ -100,8 +121,8 @@ in Tcl.
 constraints after them are applied. `write` lists each one as not written, since the file it
 writes is for timing; `--partial` writes the rest.
 
-**Everything else** that is valid SDC is read and reported by name: `set_disable_timing`,
-`set_clock_sense` and `group_path`, for example. `check` reports it, and `write` lists it as not
+**Everything else** that is valid SDC is read and reported by name: `set_data_check` and
+`group_path`, for example. `check` reports it, and `write` lists it as not
 written. A command that is not SDC or Tcl at all stops the read with an error that names it and
 the line it is on (exit 2). The reference timer stops there too, and a constraint file read only
 partly would otherwise be timed as if it were whole.
