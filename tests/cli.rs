@@ -353,3 +353,29 @@ fn signoff_take_back_commands_are_read_not_refused() {
     assert!(!text.contains("set_input_delay"), "{text}");
     assert!(text.contains("set_output_delay"), "{text}");
 }
+
+/// A command kept and written back that no checker or timer here applies is reported by `check`,
+/// with its count — a warning when it can move a slack (`set_clock_gating_check` adds a check on a
+/// gating enable), info when it cannot (`set_max_area`) — so the file is not reported CLEAN. It
+/// is not an error: the exit stays 0, and `write` writes it back.
+#[test]
+fn check_reports_each_kept_command_nothing_applies() {
+    let mut a = vec!["check", "--sdc", "tests/data/kept.sdc", "--json"];
+    a.extend(DESIGN);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    assert_eq!(v["kept_not_applied"], 2, "{out}");
+    let kept: Vec<&serde_json::Value> = v["findings"].as_array().unwrap().iter().filter(|f| f["code"] == "sdc-kept-not-applied").collect();
+    assert_eq!(kept[0]["severity"], "warning", "{out}");
+    assert!(kept[0]["message"].as_str().unwrap().contains("`set_clock_gating_check` (2 commands)"), "{out}");
+    assert_eq!(kept[1]["severity"], "info", "{out}");
+    let mut a = vec!["check", "--sdc", "tests/data/kept.sdc"];
+    a.extend(DESIGN);
+    let (_, text, _) = sdc(&a);
+    assert!(!text.contains("CLEAN"), "{text}");
+    let o = scratch("kept.out.sdc");
+    let (rc, out, err) = sdc(&["write", "--sdc", "tests/data/kept.sdc", "-o", &o, "--json"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(std::fs::read_to_string(&o).unwrap().contains("set_clock_gating_check"));
+}

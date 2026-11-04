@@ -343,6 +343,9 @@ fn check_json(r: &LintReport, sdc: &str) -> Value {
         "errors": r.errors(),
         "warnings": r.warnings(),
         "endpoint_coverage_pct": r.endpoint_coverage_pct(),
+        // kinds of command read and written back that no checker or timer here applies (each one
+        // is a finding too): `clean` is about errors, and this is what it does not cover
+        "kept_not_applied": r.findings.iter().filter(|f| f.code == "sdc-kept-not-applied").count(),
         "findings": findings
     })
 }

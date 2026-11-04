@@ -34,6 +34,13 @@ carry, one it refused, or one whose object query it could not evaluate. Such a c
 error when it affects timing (a constraint the timer never sees is a hole in the constraints) and
 information when it does not (a synthesis directive).
 
+It reports, too, each command that is **kept** (read and written back) but applied by no checker
+or timer here, with its count: `set_clock_gating_check`, the wire-load and operating-condition
+commands, `set_sense`, for example (the coverage table below marks them Kept). That is a warning
+when applying it could move a slack, so the report is not called clean, and information when it
+could not (an area or power directive). It is not an error, since the command was read as the
+reference timer reads it. The JSON result counts them in `kept_not_applied`.
+
 **Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
 periods and duplicate names, plus one note that the design checks did not run.
 
@@ -143,9 +150,10 @@ one is reported as not applied, and the constraints after it are still read.
 constraints after them are applied. `write` lists each one as not written, since the file it
 writes is for timing; `--partial` writes the rest.
 
-**Everything else** the reference reads is read too. Constraints no timer here applies yet
-(`set_data_check`, `group_path`, `set_min_pulse_width`, `set_max_time_borrow`, the wire-load and
-operating-condition commands, for example) are kept and written back as they were read. A command
+**Everything else** the reference reads is read too. Constraints no checker or timer here applies
+yet (`group_path`, `set_min_pulse_width`, `set_max_time_borrow`, the wire-load and
+operating-condition commands, for example) are kept and written back as they were read, and
+`check` reports each one. A command
 the reference runs but that is no constraint (a tool setting such as `set_assigned_delay`) is
 reported by name: `check` reports it, and `write` lists it as not written. A command that is not SDC or Tcl at all stops the read with an error that names it and
 the line it is on (exit 2). The reference timer stops there too, and a constraint file read only
@@ -158,110 +166,148 @@ engine does with it. Option-level detail follows the SDC command descriptions; t
 generated from a one-line probe per command and option, run through this engine and through the
 reference timer, so it says only what the code does.
 
-- **Modelled**: read into the constraint model and written back. The table under Constraints
-  lists the ones read with the reference timer's semantics.
+- **Applied**: read into the constraint model, written back, and applied by the tool named under
+  "Applied by": `check` (this engine's check), `sta` (the `vyges-tools/sta` timer), `sta-si` (the
+  `vyges-tools/sta-si` timer), `rsz` (the `vyges-tools/rsz` design repair, for the design-rule
+  limits), or `reader` (evaluated while the file is read: object queries, units, the current
+  design and instance, and take-back commands; what it changes is applied where the command it
+  changes is).
+- **Kept**: read as the reference timer reads it and written back, but applied by no checker or
+  timer here. `check` reports each one it reads, with its count.
+- **Tcl**: run as Tcl runs it.
 - **Read past**: recognised and skipped (it steers synthesis or power, not timing); `write` lists it
   as not written, and `--partial` writes the rest.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
-SDC 2.1: 79 modelled, 1 read past, 0 unhandled, of 80 commands.
-
 <!-- sdc-coverage:begin -->
-| Command | SDC | Status |
+SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 commands.
+
+| Command | SDC | Status | Applied by |
+| --- | --- | --- | --- |
+| `all_clocks` | 1.1 | Applied | `reader` |
+| `all_inputs` | 1.1 | Applied | `reader` |
+| `all_outputs` | 1.1 | Applied | `reader` |
+| `all_registers` | 1.7 | Applied | `reader` |
+| `create_clock` | 1.1 | Applied | `check`, `sta`, `sta-si` |
+| `create_generated_clock` | 1.3 | Applied | `check`, `sta`, `sta-si` |
+| `create_voltage_area` | 1.6 | Kept | — |
+| `current_design` | 1.1 | Applied | `reader` |
+| `current_instance` | 1.1 | Applied | `reader` |
+| `expr` | Tcl | Tcl | — |
+| `get_cell` | 1.5 | Applied (spelling of `get_cells`) | `reader` |
+| `get_cells` | 1.1 | Applied | `reader` |
+| `get_clock` | 1.5 | Applied (spelling of `get_clocks`) | `reader` |
+| `get_clocks` | 1.1 | Applied | `reader` |
+| `get_lib_cell` | 1.5 | Applied (spelling of `get_lib_cells`) | `reader` |
+| `get_lib_cells` | 1.1 | Applied | `reader` |
+| `get_lib_pin` | 1.5 | Applied (spelling of `get_lib_pins`) | `reader` |
+| `get_lib_pins` | 1.1 | Applied | `reader` |
+| `get_libs` | 1.1 | Applied | `reader` |
+| `get_net` | 1.5 | Applied (spelling of `get_nets`) | `reader` |
+| `get_nets` | 1.1 | Applied | `reader` |
+| `get_pin` | 1.5 | Applied (spelling of `get_pins`) | `reader` |
+| `get_pins` | 1.1 | Applied | `reader` |
+| `get_port` | 1.5 | Applied (spelling of `get_ports`) | `reader` |
+| `get_ports` | 1.1 | Applied | `reader` |
+| `group_path` | 1.7 | Kept | — |
+| `list` | Tcl | Tcl | — |
+| `set` | Tcl | Tcl | — |
+| `set_case_analysis` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_clock_gating_check` | 1.2 | Kept | — |
+| `set_clock_group` | 1.7 | Applied (spelling of `set_clock_groups`) | `sta`, `sta-si` |
+| `set_clock_groups` | 1.7 | Applied | `sta`, `sta-si` |
+| `set_clock_latency` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_clock_sense` | 1.7 | Kept | — |
+| `set_clock_transition` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_clock_uncertainty` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_data_check` | 1.4 | Applied | `sta-si` |
+| `set_disable_timing` | 1.1 | Applied | `sta-si` |
+| `set_drive` | 1.1 | Kept | — |
+| `set_driving_cell` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_false_path` | 1.1 | Applied | `check`, `sta`, `sta-si` |
+| `set_fanout_load` | 1.1 | Kept | — |
+| `set_hierarchy_separator` | 1.2 | Applied | `reader` |
+| `set_ideal_latency` | 1.7 | Kept | — |
+| `set_ideal_network` | 1.7 | Kept | — |
+| `set_ideal_transition` | 1.7 | Kept | — |
+| `set_input_delay` | 1.1 | Applied | `check`, `sta`, `sta-si` |
+| `set_input_transition` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_level_shifter_strategy` | 1.6 | Kept | — |
+| `set_level_shifter_threshold` | 1.6 | Kept | — |
+| `set_load` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_logic_dc` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_logic_one` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_logic_zero` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_max_area` | 1.1 | Kept | — |
+| `set_max_capacitance` | 1.1 | Applied | `rsz` |
+| `set_max_delay` | 1.1 | Applied | `check`, `sta` |
+| `set_max_dynamic_power` | 1.4 | Kept | — |
+| `set_max_fanout` | 1.1 | Applied | `rsz` |
+| `set_max_leakage_power` | 1.4 | Kept | — |
+| `set_max_time_borrow` | 1.1 | Kept | — |
+| `set_max_transition` | 1.1 | Applied | `rsz` |
+| `set_min_capacitance` | 1.1 | Kept | — |
+| `set_min_delay` | 1.1 | Applied | `check`, `sta` |
+| `set_min_porosity` | 1.4 | Read past | — |
+| `set_min_pulse_width` | 2.0 | Kept | — |
+| `set_multicycle_path` | 1.1 | Applied | `check`, `sta`, `sta-si` |
+| `set_operating_conditions` | 1.1 | Kept | — |
+| `set_output_delay` | 1.1 | Applied | `check`, `sta`, `sta-si` |
+| `set_port_fanout_number` | 1.1 | Kept | — |
+| `set_propagated_clock` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_resistance` | 1.1 | Kept | — |
+| `set_sense` | 2.1 ‡ | Kept | — |
+| `set_timing_derate` | 1.5 | Applied | `sta`, `sta-si` |
+| `set_unit` | 1.7 | Applied (spelling of `set_units`) | `reader` |
+| `set_units` | 1.7 | Applied | `reader` |
+| `set_voltage` | 1.8 | Kept | — |
+| `set_wire_load_min_block_size` | 1.1 | Kept | — |
+| `set_wire_load_mode` | 1.1 | Kept | — |
+| `set_wire_load_model` | 1.1 | Kept | — |
+| `set_wire_load_selection_group` | 1.1 | Kept | — |
+
+Commands outside the SDC versions the reference parser declares, found in constraint files written for other tools:
+
+| Command | Status | Applied by |
 | --- | --- | --- |
-| `all_clocks` | 1.1 | Modelled |
-| `all_inputs` | 1.1 | Modelled |
-| `all_outputs` | 1.1 | Modelled |
-| `all_registers` | 1.7 | Modelled |
-| `create_clock` | 1.1 | Modelled |
-| `create_generated_clock` | 1.3 | Modelled |
-| `create_voltage_area` | 1.6 | Modelled |
-| `current_design` | 1.1 | Modelled |
-| `current_instance` | 1.1 | Modelled |
-| `expr` | 1.1 | Modelled (Tcl) |
-| `get_cell` | 1.1 | Modelled (spelling of `get_cells`) |
-| `get_cells` | 1.1 | Modelled |
-| `get_clocks` | 1.1 | Modelled |
-| `get_lib_cell` | 1.1 | Modelled (spelling of `get_lib_cells`) |
-| `get_lib_cells` | 1.1 | Modelled |
-| `get_lib_pin` | 1.1 | Modelled (spelling of `get_lib_pins`) |
-| `get_lib_pins` | 1.1 | Modelled |
-| `get_libs` | 1.1 | Modelled |
-| `get_net` | 1.1 | Modelled (spelling of `get_nets`) |
-| `get_nets` | 1.1 | Modelled |
-| `get_pin` | 1.1 | Modelled (spelling of `get_pins`) |
-| `get_pins` | 1.1 | Modelled |
-| `get_port` | 1.1 | Modelled (spelling of `get_ports`) |
-| `get_ports` | 1.1 | Modelled |
-| `group_path` | 1.7 | Modelled |
-| `list` | 1.1 | Modelled (Tcl) |
-| `set` | 1.1 | Modelled (Tcl) |
-| `set_case_analysis` | 1.1 | Modelled |
-| `set_clock_gating_check` | 1.2 | Modelled |
-| `set_clock_group` | 1.7 | Modelled (spelling of `set_clock_groups`) |
-| `set_clock_groups` | 1.7 | Modelled |
-| `set_clock_latency` | 1.1 | Modelled |
-| `set_clock_sense` | 1.7 | Modelled |
-| `set_clock_transition` | 1.1 | Modelled |
-| `set_clock_uncertainty` | 1.1 | Modelled |
-| `set_data_check` | 1.4 | Modelled |
-| `set_disable_timing` | 1.1 | Modelled |
-| `set_drive` | 1.1 | Modelled |
-| `set_driving_cell` | 1.1 | Modelled |
-| `set_false_path` | 1.1 | Modelled |
-| `set_fanout_load` | 1.1 | Modelled |
-| `set_hierarchy_separator` | 1.2 | Modelled |
-| `set_ideal_latency` | 1.7 | Modelled |
-| `set_ideal_network` | 1.7 | Modelled |
-| `set_ideal_transition` | 1.7 | Modelled |
-| `set_input_delay` | 1.1 | Modelled |
-| `set_input_transition` | 1.1 | Modelled |
-| `set_level_shifter_strategy` | 1.6 | Modelled |
-| `set_level_shifter_threshold` | 1.6 | Modelled |
-| `set_load` | 1.1 | Modelled |
-| `set_logic_dc` | 1.1 | Modelled |
-| `set_logic_one` | 1.1 | Modelled |
-| `set_logic_zero` | 1.1 | Modelled |
-| `set_max_area` | 1.1 | Modelled |
-| `set_max_capacitance` | 1.1 | Modelled |
-| `set_max_delay` | 1.1 | Modelled |
-| `set_max_dynamic_power` | 1.4 | Modelled |
-| `set_max_fanout` | 1.1 | Modelled |
-| `set_max_leakage_power` | 1.4 | Modelled |
-| `set_max_time_borrow` | 1.1 | Modelled |
-| `set_max_transition` | 1.1 | Modelled |
-| `set_min_capacitance` | 1.1 | Modelled |
-| `set_min_delay` | 1.1 | Modelled |
-| `set_min_porosity` | 1.4 | Read past |
-| `set_min_pulse_width` | 2.0 | Modelled |
-| `set_multicycle_path` | 1.1 | Modelled |
-| `set_operating_conditions` | 1.1 | Modelled |
-| `set_output_delay` | 1.1 | Modelled |
-| `set_port_fanout_number` | 1.1 | Modelled |
-| `set_propagated_clock` | 1.1 | Modelled |
-| `set_resistance` | 1.1 | Modelled |
-| `set_sense` | 2.1 | Modelled |
-| `set_timing_derate` | 1.5 | Modelled |
-| `set_unit` | 1.7 | Modelled (spelling of `set_units`) |
-| `set_units` | 1.7 | Modelled |
-| `set_voltage` | 1.8 | Modelled |
-| `set_wire_load_min_block_size` | 1.1 | Modelled |
-| `set_wire_load_mode` | 1.1 | Modelled |
-| `set_wire_load_model` | 1.1 | Modelled |
-| `set_wire_load_selection_group` | 1.1 | Modelled |
+| `remove_propagated_clock` | Applied | `reader` |
+| `set_clock_jitter` | Unhandled | — |
+| `set_current_design` | Unhandled | — |
+| `set_disable_clock_gating_check` | Kept | — |
+| `set_dont_touch` | Read past | — |
+| `set_path_margin` | Kept | — |
+| `set_pvt` | Kept | — |
+| `unset_data_check` | Applied | `sta-si` |
+| `unset_disable_clock_gating_check` | Kept | — |
+| `unset_disable_timing` | Applied | `sta-si` |
+| `unset_propagated_clock` | Applied | `reader` |
+
+Options SDC declares that the reference timer does not have. They are read, never refused:
+
+| Command | Option | Status |
+| --- | --- | --- |
+| `all_inputs` | `-clock` | Kept |
+| `all_inputs` | `-level_sensitive` | Kept |
+| `all_inputs` | `-edge_triggered` | Kept |
+| `all_outputs` | `-clock` | Kept |
+| `all_outputs` | `-level_sensitive` | Kept |
+| `all_outputs` | `-edge_triggered` | Kept |
+| `all_registers` | `-no_hierarchy` | Kept |
+| `all_registers` | `-slave_clock_pins` | Kept |
+| `all_registers` | `-master_slave` | Kept |
+| `get_ports` | `-hierarchical` | Applied |
+| `set_driving_cell` | `-clock` | Kept |
+| `set_driving_cell` | `-clock_fall` | Kept |
+| `set_input_delay` | `-level_sensitive` | Kept |
+| `set_load` | `-substract_pin_load` | Applied |
+| `set_max_dynamic_power` | `-unit` | Kept |
+| `set_max_leakage_power` | `-unit` | Kept |
+| `set_operating_conditions` | `-object_list` | Kept |
+| `set_output_delay` | `-level_sensitive` | Kept |
+| `set_timing_derate` | `-min` | Kept |
+| `set_timing_derate` | `-max` | Kept |
+| `set_wire_load_selection_group` | `-group_name` | Kept |
 <!-- sdc-coverage:end -->
-
-Commands found in constraint files written for other tools, outside the SDC 2.1 command set:
-
-| Command | Status |
-| --- | --- |
-| `remove_propagated_clock` | Modelled |
-| `set_clock_jitter` | Unhandled |
-| `set_current_design` | Unhandled |
-| `set_dont_touch` | Read past |
-| `set_path_margin` | Modelled |
-| `set_pvt` | Modelled |
-| `unset_propagated_clock` | Modelled |
 
 The Tcl, collection and take-back commands such files use are described under Constraints above.
 
