@@ -396,3 +396,29 @@ fn the_readme_coverage_tables_are_the_registry() {
         panic!("README coverage differs from the registry (cargo run --example coverage_table):\n{}", diff.join("\n"));
     }
 }
+
+/// The README's usage block names every option `--help` prints, and none it does not: an option
+/// added to the tool without the README, or left in the README after it is gone, fails here.
+#[test]
+fn the_readme_usage_names_every_option_help_prints() {
+    let options = |text: &str| -> std::collections::BTreeSet<String> {
+        text.split(|c: char| c.is_whitespace() || "[]|,`.:;()".contains(c))
+            .filter(|w| w.len() >= 2 && w.starts_with('-') && w[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '-'))
+            .filter(|w| w.starts_with("--") || w.len() == 2)
+            .map(|w| w.to_string())
+            .collect()
+    };
+    let (code, help, _) = sdc(&["--help"]);
+    assert_eq!(code, 0);
+    let help = help.split("ENVIRONMENT:").next().expect("help text");
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).expect("README");
+    let usage = readme
+        .split("<!-- usage:begin -->")
+        .nth(1)
+        .and_then(|r| r.split("<!-- usage:end -->").next())
+        .expect("README usage markers");
+    let (h, r) = (options(help), options(usage));
+    let missing: Vec<_> = h.difference(&r).collect();
+    let extra: Vec<_> = r.difference(&h).collect();
+    assert!(missing.is_empty() && extra.is_empty(), "README usage lacks {missing:?}; names {extra:?}, which --help does not");
+}

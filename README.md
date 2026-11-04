@@ -10,10 +10,23 @@ nothing and quietly does nothing. `vyges-sdc check` looks for exactly these.
 
 ## Usage
 
+<!-- usage:begin -->
 ```sh
-vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib] [--metadata vyges-metadata.json] [--define NAME=VALUE ...] [--json]
-vyges physical sdc write --sdc design.sdc -o normalised.sdc [--netlist design.v --lib cells.lib] [--define NAME=VALUE ...] [--partial] [--json]
+vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib [--lib ...]]
+                         [--top NAME] [--keep MODULE ...] [--metadata vyges-metadata.json]
+                         [--define NAME=VALUE ...] [--fail-on-warning] [--json]
+                         [-q|--quiet ...] [-v|--verbose ...]
+vyges physical sdc write --sdc design.sdc [-o|--out normalised.sdc]
+                         [--netlist design.v --lib cells.lib [--lib ...]]
+                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
+                         [--design NAME] [--partial] [--json] [-q|--quiet ...] [-v|--verbose ...]
+vyges physical sdc --describe | --version | --help
+vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 ```
+<!-- usage:end -->
+
+`vyges-sdc --help` describes each option; a test fails when this block and `--help` name
+different options.
 
 ### `check`
 

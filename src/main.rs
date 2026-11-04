@@ -30,11 +30,13 @@ vyges physical sdc — SDC constraint checking and writing
 
 USAGE:
   vyges physical sdc check --sdc <f.sdc> [--netlist <n.v|n.json> --lib <l.lib> [--lib ...]]
-                       [--metadata <vyges-metadata.json>] [--define NAME=VALUE ...]
-                       [--fail-on-warning] [--json]
-  vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib>]
-                       [--define NAME=VALUE ...] [--design NAME] [--partial] [--json]
+                       [--top NAME] [--keep MODULE ...] [--metadata <vyges-metadata.json>]
+                       [--define NAME=VALUE ...] [--fail-on-warning] [--json] [-q|-v ...]
+  vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib> [--lib ...]]
+                       [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
+                       [--design NAME] [--partial] [--json] [-q|-v ...]
   vyges physical sdc --describe | --version | --help
+  vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 
 COMMANDS:
   check   completeness + consistency of the constraints against the design: I/O with no delay,
