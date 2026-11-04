@@ -238,18 +238,18 @@ fn read_opts(args: &[String], path: &str) -> Result<ReadOpts, String> {
     Ok(ReadOpts { defines, base_dir })
 }
 
-/// Read the SDC; when it holds object queries that need the design and a netlist was given,
-/// read it again with the design so they are evaluated rather than refused.
+/// Read the SDC; when a netlist was given, against the design, as the reference reads it: object
+/// queries are evaluated rather than refused, and what the reference looks up in the design or its
+/// libraries (a `-reference_pin`, an operating condition, a wire load model) is checked there.
 fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>, ro: &ReadOpts) -> Result<Sdc, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let text = String::from_utf8_lossy(&bytes);
-    let plain = Sdc::parse_opts(&text, ro).map_err(|e| format!("{path}: {e}"))?;
     match design {
-        Some((nl, lib)) if !plain.unevaluated_queries.is_empty() => {
+        Some((nl, lib)) => {
             let d = SdcDesign::from_netlist(nl, Some(lib));
             Sdc::parse_with_opts(&text, &d, ro).map_err(|e| format!("{path}: {e}"))
         }
-        _ => Ok(plain),
+        None => Sdc::parse_opts(&text, ro).map_err(|e| format!("{path}: {e}")),
     }
 }
 
