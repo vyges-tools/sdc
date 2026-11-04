@@ -49,7 +49,7 @@ information when it does not (a synthesis directive).
 
 It reports, too, each command that is **kept** (read and written back) but applied by no checker
 or timer here, with its count: `set_clock_gating_check`, the wire-load and operating-condition
-commands, `set_sense`, for example (the coverage table below marks them Kept). That is a warning
+commands, `set_clock_sense`, for example (the coverage table below marks them Kept). That is a warning
 when applying it could move a slack, so the report is not called clean, and information when it
 could not (the area and power limits `set_max_area`, `set_max_dynamic_power`,
 `set_max_leakage_power`). It is not an error, since the command was read as the reference timer
@@ -125,7 +125,7 @@ code does.
 | Constant logic | `set_case_analysis`, `set_logic_zero`, `set_logic_one`, `set_logic_dc` |
 | Derating and units | `set_timing_derate`, `set_units` |
 | Design rules | `set_max_transition`, `set_max_fanout`, `set_max_capacitance` |
-| Arcs and senses | `set_disable_timing`, `unset_disable_timing`, `set_sense`, `set_clock_sense`, `set_disable_clock_gating_check`, `unset_disable_clock_gating_check` |
+| Arcs and senses | `set_disable_timing`, `unset_disable_timing`, `set_clock_sense`, `set_disable_clock_gating_check`, `unset_disable_clock_gating_check` |
 <!-- constraints-written:end -->
 
 **Objects.** `get_ports`, `get_pins`, `get_cells`, `get_nets` and `get_clocks` with their
@@ -198,8 +198,7 @@ Every command of the SDC command set, with the SDC version that introduced it an
 engine does with it. The version is the first SDC version whose declaration file, in the
 reference SDC parser Synopsys published with the standard (SDC 1.1 to 2.0), declares the command:
 the singular query spellings (`get_cell`, `get_port`, …) are SDC 1.5, though their plurals are
-1.1. ‡ No public source declares SDC 2.1, so `set_sense` is dated 2.1 without one to check it
-against; `set_clock_jitter` and `set_disable_clock_gating_check` are declared by no version the
+1.1. `set_clock_jitter` and `set_disable_clock_gating_check` are declared by no version the
 parser covers, and are listed outside the set. The tables are generated from the command registry in loom
 (`vyges_loom::sdc::registry`), whose own test reads one probe line per command and fails if a
 status is not what the reader does. `cargo run --example coverage_table` prints them, and a test
@@ -223,7 +222,7 @@ code: change it with the consumer.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
 <!-- sdc-coverage:begin -->
-SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 commands.
+SDC 1.1 to 2.0: 51 applied, 25 kept, 4 Tcl, 1 read past, 0 unhandled, of 81 commands.
 
 | Command | SDC | Status | Applied by |
 | --- | --- | --- | --- |
@@ -253,6 +252,7 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `get_port` | 1.5 | Applied (spelling of `get_ports`) | `reader` |
 | `get_ports` | 1.1 | Applied | `reader` |
 | `group_path` | 1.7 | Kept | — |
+| `if` | Tcl | Tcl (a condition the file alone decides (`info exists`, a variable); one on a query's result needs the design and is listed as not applied) | — |
 | `list` | Tcl | Tcl | — |
 | `set` | Tcl | Tcl | — |
 | `set_case_analysis` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
@@ -278,7 +278,7 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_level_shifter_strategy` | 1.6 | Kept | — |
 | `set_level_shifter_threshold` | 1.6 | Kept | — |
 | `set_load` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_logic_dc` | 1.1 | Applied (through its logic simulation, with the design) | `sta` |
+| `set_logic_dc` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
 | `set_logic_one` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
 | `set_logic_zero` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
 | `set_max_area` | 1.1 | Kept | — |
@@ -299,7 +299,6 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_port_fanout_number` | 1.1 | Kept | — |
 | `set_propagated_clock` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_resistance` | 1.1 | Kept | — |
-| `set_sense` | 2.1 ‡ | Kept | — |
 | `set_timing_derate` | 1.5 | Applied | `sta`, `sta-si` |
 | `set_unit` | 1.7 | Applied (spelling of `set_units`) | `reader` |
 | `set_units` | 1.7 | Applied | `reader` |
