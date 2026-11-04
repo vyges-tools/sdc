@@ -379,3 +379,20 @@ fn check_reports_each_kept_command_nothing_applies() {
     assert_eq!(rc, 0, "{out}{err}");
     assert!(std::fs::read_to_string(&o).unwrap().contains("set_clock_gating_check"));
 }
+
+/// **The README's command coverage is generated, not written**: every command, its SDC version,
+/// its status and the consumers that apply it come from loom's command registry, whose own test
+/// holds each status to what the reader does with the command. A README edited by hand, or a
+/// registry changed without the README, fails here; `cargo run --example coverage_table`
+/// prints what belongs between the markers.
+#[test]
+fn the_readme_coverage_tables_are_the_registry() {
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+    let (_, rest) = readme.split_once("<!-- sdc-coverage:begin -->\n").expect("begin marker");
+    let (tables, _) = rest.split_once("<!-- sdc-coverage:end -->").expect("end marker");
+    let want = vyges_loom::sdc::registry::coverage_markdown();
+    if tables != want {
+        let diff: Vec<String> = want.lines().zip(tables.lines()).filter(|(w, r)| w != r).take(5).map(|(w, r)| format!("registry: {w}\n  readme: {r}")).collect();
+        panic!("README coverage differs from the registry (cargo run --example coverage_table):\n{}", diff.join("\n"));
+    }
+}

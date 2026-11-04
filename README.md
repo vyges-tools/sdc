@@ -179,9 +179,11 @@ reference SDC parser Synopsys published with the standard (SDC 1.1 to 2.0), decl
 the singular query spellings (`get_cell`, `get_port`, …) are SDC 1.5, though their plurals are
 1.1. ‡ No public source declares SDC 2.1, so `set_sense` is dated 2.1 without one to check it
 against; `set_clock_jitter` and `set_disable_clock_gating_check` are declared by no version the
-parser covers, and are listed outside the set. Option-level detail follows the SDC command descriptions; the table is
-generated from a one-line probe per command and option, run through this engine and through the
-reference timer, so it says only what the code does.
+parser covers, and are listed outside the set. The tables are generated from the command registry in loom
+(`vyges_loom::sdc::registry`), whose own test reads one probe line per command and fails if a
+status is not what the reader does. `cargo run --example coverage_table` prints them, and a test
+in this repository fails when the README's copy differs. "Applied by" names the consumers'
+code: change it with the consumer.
 
 - **Applied**: read into the constraint model, written back, and applied by the tool named under
   "Applied by": `check` (this engine's check), `sta` (the `vyges-tools/sta` timer), `sta-si` (the
