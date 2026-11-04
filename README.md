@@ -51,8 +51,14 @@ It reports, too, each command that is **kept** (read and written back) but appli
 or timer here, with its count: `set_clock_gating_check`, the wire-load and operating-condition
 commands, `set_sense`, for example (the coverage table below marks them Kept). That is a warning
 when applying it could move a slack, so the report is not called clean, and information when it
-could not (an area or power directive). It is not an error, since the command was read as the
-reference timer reads it. The JSON result counts them in `kept_not_applied`.
+could not (the area and power limits `set_max_area`, `set_max_dynamic_power`,
+`set_max_leakage_power`). It is not an error, since the command was read as the reference timer
+reads it. The JSON result counts them in `kept_not_applied`.
+
+It names, at information level and with a count, each command or option the file uses that the
+reference timer reads but no SDC version declares (`get_ports -filter`, `-reset_path`, `set_pvt`,
+the `unset_*` commands; the last table below lists the options). The file is read as the
+reference timer reads it; another SDC reader may refuse it.
 
 **Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
 periods and duplicate names, plus one note that the design checks did not run.
@@ -100,7 +106,9 @@ Malformed constraints are refused when the file is read rather than guessed at. 
 `-period` given with a unit (`20ns`, `"1 MHz"`) is an error, because SDC periods are plain
 numbers in the file's time unit. A design-rule limit (`set_max_capacitance`, `set_max_fanout`,
 `set_max_transition`) without its value or its objects, with an option it does not have, or with a
-value that is not a positive number is refused with a message.
+value that is not a positive number is refused with a message, and `check` reports it as an
+error: `set_max_capacitance 0.2` (no objects) and `set_max_capacitance -clock_path 0.1
+[get_clocks c]` (`-clock_path` is `set_max_transition`'s) are both errors.
 
 ## Constraints
 
@@ -207,8 +215,11 @@ code: change it with the consumer.
 - **Kept**: read as the reference timer reads it and written back, but applied by no checker or
   timer here. `check` reports each one it reads, with its count.
 - **Tcl**: run as Tcl runs it.
-- **Read past**: recognised and skipped (it steers synthesis or power, not timing); `write` lists it
-  as not written, and `--partial` writes the rest.
+- **Read past**: a synthesis-only command the reference timer does not run (`set_dont_touch`,
+  `set_min_porosity`; outside SDC, `set_size_only` and the like). It is skipped, reported as not
+  applied at information level, and `write` lists it as not written (`--partial` writes the
+  rest). One rule covers the area and power directives: one the reference timer reads is Kept
+  (written back, reported at information level), one it does not is Read past.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
 <!-- sdc-coverage:begin -->
@@ -224,7 +235,7 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `create_generated_clock` | 1.3 | Applied | `check`, `sta`, `sta-si` |
 | `create_voltage_area` | 1.6 | Kept | — |
 | `current_design` | 1.1 | Applied | `reader` |
-| `current_instance` | 1.1 | Applied | `reader` |
+| `current_instance` | 1.1 | Applied (`-instance` or the positional; an unqualified name under it, and `-hierarchical` under it, are refused) | `reader` |
 | `expr` | Tcl | Tcl | — |
 | `get_cell` | 1.5 | Applied (spelling of `get_cells`) | `reader` |
 | `get_cells` | 1.1 | Applied | `reader` |
@@ -252,15 +263,15 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_clock_sense` | 1.7 | Kept | — |
 | `set_clock_transition` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_clock_uncertainty` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_data_check` | 1.4 | Applied | `sta-si` |
+| `set_data_check` | 1.4 | Applied (`-rise` / `-fall`: kept, not applied) | `sta-si` |
 | `set_disable_timing` | 1.1 | Applied | `sta-si` |
 | `set_drive` | 1.1 | Kept | — |
 | `set_driving_cell` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_false_path` | 1.1 | Applied | `check`, `sta`, `sta-si` |
 | `set_fanout_load` | 1.1 | Kept | — |
-| `set_hierarchy_separator` | 1.2 | Applied | `reader` |
+| `set_hierarchy_separator` | 1.2 | Applied (`/` only: another stops the read) | `reader` |
 | `set_ideal_latency` | 1.7 | Kept | — |
-| `set_ideal_network` | 1.7 | Kept | — |
+| `set_ideal_network` | 1.7 | Kept (SDC's `-no_propagate` and the reference's `-no_propagation` both read) | — |
 | `set_ideal_transition` | 1.7 | Kept | — |
 | `set_input_delay` | 1.1 | Applied | `check`, `sta`, `sta-si` |
 | `set_input_transition` | 1.1 | Applied | `sta`, `sta-si` |
@@ -298,10 +309,26 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_wire_load_model` | 1.1 | Kept | — |
 | `set_wire_load_selection_group` | 1.1 | Kept | — |
 
-Commands outside the SDC versions the reference parser declares, found in constraint files written for other tools:
+Commands outside the SDC versions the reference parser declares, found in constraint files written for other tools (a synthesis tool's collection commands among them):
 
 | Command | Status | Applied by |
 | --- | --- | --- |
+| `add_to_collection` | Applied | `reader` |
+| `all_fanin` | Not applied | — |
+| `all_fanout` | Not applied | — |
+| `append_to_collection` | Applied | `reader` |
+| `delete_clock` | Applied | `reader` |
+| `delete_generated_clock` | Applied | `reader` |
+| `derive_clock_uncertainty` | Unhandled (known, not run: it stops the read) | — |
+| `derive_pll_clocks` | Unhandled (known, not run: it stops the read) | — |
+| `filter_collection` | Not applied | — |
+| `foreach_in_collection` | Applied | `reader` |
+| `get_attribute` | Not applied | — |
+| `get_designs` | Not applied | — |
+| `get_object_name` | Applied | `reader` |
+| `index_collection` | Not applied | — |
+| `load_of` | Not applied | — |
+| `remove_from_collection` | Applied (only as every input or output but some, the objects of an I/O delay) | `reader` |
 | `remove_propagated_clock` | Applied | `reader` |
 | `set_clock_jitter` | Unhandled | — |
 | `set_current_design` | Unhandled | — |
@@ -309,10 +336,22 @@ Commands outside the SDC versions the reference parser declares, found in constr
 | `set_dont_touch` | Read past | — |
 | `set_path_margin` | Kept | — |
 | `set_pvt` | Kept | — |
+| `sizeof_collection` | Not applied | — |
+| `sort_collection` | Not applied | — |
+| `unset_case_analysis` | Applied | `reader` |
+| `unset_clock_groups` | Applied | `reader` |
+| `unset_clock_latency` | Applied | `reader` |
+| `unset_clock_transition` | Applied | `reader` |
+| `unset_clock_uncertainty` | Applied | `reader` |
 | `unset_data_check` | Applied | `sta-si` |
 | `unset_disable_clock_gating_check` | Kept | — |
 | `unset_disable_timing` | Applied | `sta-si` |
+| `unset_input_delay` | Applied | `reader` |
+| `unset_output_delay` | Applied | `reader` |
+| `unset_path_exceptions` | Applied | `reader` |
 | `unset_propagated_clock` | Applied | `reader` |
+| `unset_timing_derate` | Applied | `reader` |
+| `write_sdc` | Not applied (an output command, not a constraint: listed as not applied) | — |
 
 Options SDC declares that the reference timer does not have. They are read, never refused:
 
@@ -327,7 +366,10 @@ Options SDC declares that the reference timer does not have. They are read, neve
 | `all_registers` | `-no_hierarchy` | Kept |
 | `all_registers` | `-slave_clock_pins` | Kept |
 | `all_registers` | `-master_slave` | Kept |
+| `current_instance` | `-instance` | Applied |
 | `get_ports` | `-hierarchical` | Applied |
+| `set_data_check` | `-rise` | Kept |
+| `set_data_check` | `-fall` | Kept |
 | `set_driving_cell` | `-clock` | Kept |
 | `set_driving_cell` | `-clock_fall` | Kept |
 | `set_input_delay` | `-level_sensitive` | Kept |
@@ -339,6 +381,50 @@ Options SDC declares that the reference timer does not have. They are read, neve
 | `set_timing_derate` | `-min` | Kept |
 | `set_timing_derate` | `-max` | Kept |
 | `set_wire_load_selection_group` | `-group_name` | Kept |
+
+Reference-timer options no SDC version declares. They are read as the reference reads them, and `check` names each one a file uses, at info level (the file is not portable SDC):
+
+| Command | Option |
+| --- | --- |
+| `all_inputs` | `-no_clocks` |
+| `get_cells` | `-filter` |
+| `get_cells` | `-quiet` |
+| `get_clocks` | `-filter` |
+| `get_clocks` | `-quiet` |
+| `get_lib_cells` | `-filter` |
+| `get_lib_cells` | `-of_objects` |
+| `get_lib_cells` | `-quiet` |
+| `get_lib_pins` | `-filter` |
+| `get_lib_pins` | `-of_objects` |
+| `get_lib_pins` | `-quiet` |
+| `get_libs` | `-filter` |
+| `get_libs` | `-quiet` |
+| `get_nets` | `-filter` |
+| `get_nets` | `-quiet` |
+| `get_pins` | `-filter` |
+| `get_pins` | `-of_objects` |
+| `get_pins` | `-quiet` |
+| `get_ports` | `-filter` |
+| `get_ports` | `-nocase` |
+| `get_ports` | `-of_objects` |
+| `get_ports` | `-quiet` |
+| `group_path` | `-critical_range` |
+| `set_clock_sense` | `-clock` |
+| `set_driving_cell` | `-cell` |
+| `set_false_path` | `-reset_path` |
+| `set_load` | `-fall` |
+| `set_load` | `-rise` |
+| `set_max_delay` | `-ignore_clock_latency` |
+| `set_max_delay` | `-probe` |
+| `set_max_delay` | `-reset_path` |
+| `set_max_transition` | `-data_path` |
+| `set_min_delay` | `-ignore_clock_latency` |
+| `set_min_delay` | `-probe` |
+| `set_min_delay` | `-reset_path` |
+| `set_multicycle_path` | `-reset_path` |
+| `set_port_fanout_number` | `-max` |
+| `set_port_fanout_number` | `-min` |
+| `set_units` | `-distance` |
 <!-- sdc-coverage:end -->
 
 The Tcl, collection and take-back commands such files use are described under Constraints above.
