@@ -429,6 +429,31 @@ Reference-timer options no SDC version declares. They are read as the reference 
 
 The Tcl, collection and take-back commands such files use are described under Constraints above.
 
+The version dates follow the public Synopsys reference SDC parser (SDC 1.1 to 2.0). A newer
+release of that parser may date some commands differently.
+
+### One-edge data checks
+
+`set_data_check -rise` and `-fall` take their SDC meaning: the check applies to that edge of the
+data only. Nothing here times a one-edge check, so:
+
+- `check` reports it as a warning, not an error, and the file is still written back whole:
+  `` `set_data_check -rise`: kept and written back; it can change timing, and no checker or timer
+  here applies it``. With `--fail-on-warning` the exit code is 1.
+- The `sta-si` timer skips that check, rather than applying it to both edges, and warns:
+  `set_data_check: -rise (a check on one data edge) is not modelled; not applied`. Its other data
+  checks are applied.
+- The `sta` timer does not model `set_data_check` and refuses a file that has one.
+
+### Hierarchy separator
+
+Only `/` is supported. Any other separator stops the read (exit 2), since names written with it
+would not resolve. For `set_hierarchy_separator .` the message is:
+
+```text
+`set_hierarchy_separator .`: only `/` is supported, and names using another separator would not resolve; the file is not read
+```
+
 ## Exit status and events
 
 | Exit | Meaning |

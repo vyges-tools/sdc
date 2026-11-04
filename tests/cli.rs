@@ -422,3 +422,39 @@ fn the_readme_usage_names_every_option_help_prints() {
     let extra: Vec<_> = r.difference(&h).collect();
     assert!(missing.is_empty() && extra.is_empty(), "README usage lacks {missing:?}; names {extra:?}, which --help does not");
 }
+
+/// SDC 1.4+ `set_data_check -rise` / `-fall` checks one edge of the data. `check` reads it with
+/// that meaning and, since no timer here models a one-edge check, warns that it is kept and not
+/// applied; it is not an error, and the file is still written back whole.
+#[test]
+fn check_warns_on_a_one_edge_data_check() {
+    let f = scratch("one_edge.sdc");
+    std::fs::write(&f, "create_clock -name c -period 10 [get_ports clk]\nset_data_check -rise -from [get_pins r/D] -to [get_pins s/D] 0.1\n").unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--json"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    let w: Vec<&serde_json::Value> = v["findings"].as_array().unwrap().iter().filter(|f| f["code"] == "sdc-kept-not-applied").collect();
+    assert_eq!(w.len(), 1, "{out}");
+    assert_eq!(w[0]["severity"], "warning", "{out}");
+    assert_eq!(
+        w[0]["message"],
+        "`set_data_check -rise`: kept and written back; it can change timing, and no checker or timer here applies it"
+    );
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--fail-on-warning"]);
+    assert_eq!(rc, 1, "{out}{err}");
+}
+
+/// Only `/` is supported as the hierarchy separator. Any other stops the read (exit 2) with a
+/// message naming it, since names written with it would not resolve.
+#[test]
+fn another_hierarchy_separator_stops_the_read() {
+    let f = scratch("separator.sdc");
+    std::fs::write(&f, "set_hierarchy_separator .\ncreate_clock -name c -period 10 [get_ports clk]\n").unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f]);
+    assert_eq!(rc, 2, "{out}{err}");
+    let msg = "`set_hierarchy_separator .`: only `/` is supported, and names using another separator would not resolve; the file is not read";
+    assert!(err.contains(msg) || out.contains(msg), "{out}{err}");
+    let f = scratch("separator_slash.sdc");
+    std::fs::write(&f, "set_hierarchy_separator /\ncreate_clock -name c -period 10 [get_ports clk]\n").unwrap();
+    assert_eq!(sdc(&["check", "--sdc", &f]).0, 0);
+}
