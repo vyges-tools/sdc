@@ -1,0 +1,6 @@
+create_clock -name clk -period 10 [get_ports clk]
+set_propagated_clock [get_clocks clk]
+remove_propagated_clock [get_clocks clk]
+set_input_delay 2 -clock clk [get_ports din]
+remove_input_delay [get_ports din]
+set_output_delay 1 -clock clk [all_outputs]

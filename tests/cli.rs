@@ -330,3 +330,26 @@ fn a_hierarchical_netlist_is_flattened_for_check() {
     let (_, out, _) = sdc(&["check", "--sdc", "tests/data/hier.sdc", "--netlist", "tests/data/hier.v", "--lib", "tests/data/seq.lib", "--keep", "stage", "--json", "-qqq"]);
     assert!(json(&out)["findings"].to_string().contains("exception-unknown-object"), "{out}");
 }
+
+/// The signoff timer's take-back commands are read as the reference's undo: `remove_propagated_clock`
+/// leaves the clock ideal, and `remove_input_delay` (no `-clock`) takes back every input delay on
+/// its objects. With a loom that predates them (the pin this engine had before), the read stops at
+/// `remove_propagated_clock` as an unknown command (exit 2); this test pins the loom that reads them.
+#[test]
+fn signoff_take_back_commands_are_read_not_refused() {
+    let mut a = vec!["check", "--sdc", "tests/data/take_back.sdc", "--json"];
+    a.extend(DESIGN);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    assert_eq!(v["errors"], 0, "{out}");
+    let o = scratch("take_back.out.sdc");
+    let (rc, out, err) = sdc(&["write", "--sdc", "tests/data/take_back.sdc", "-o", &o, "--json"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    let text = std::fs::read_to_string(&o).unwrap();
+    // the clock was made propagated and taken back: no `set_propagated_clock` is written
+    assert!(!text.contains("set_propagated_clock"), "{text}");
+    // the input delay was taken back, and the output delay stands
+    assert!(!text.contains("set_input_delay"), "{text}");
+    assert!(text.contains("set_output_delay"), "{text}");
+}
