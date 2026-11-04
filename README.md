@@ -80,7 +80,7 @@ file as a `# not written:` line. The JSON result says `complete: false` either w
 
 ```jsonc
 { "command": "write", "status": "refused", "complete": false,
-  "not_written": [ "not modelled: set_disable_timing" ] }
+  "not_written": [ "not modelled: set_assigned_delay" ] }
 ```
 
 Malformed constraints are refused when the file is read rather than guessed at. For example, a
