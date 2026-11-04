@@ -49,7 +49,7 @@ information when it does not (a synthesis directive).
 
 It reports, too, each command that is **kept** (read and written back) but applied by no checker
 or timer here, with its count: `set_clock_gating_check`, the wire-load and operating-condition
-commands, `set_clock_sense`, for example (the coverage table below marks them Kept). That is a warning
+commands, `set_sense`, `set_clock_sense`, for example (the coverage table below marks them Kept). That is a warning
 when applying it could move a slack, so the report is not called clean, and information when it
 could not (the area and power limits `set_max_area`, `set_max_dynamic_power`,
 `set_max_leakage_power`). It is not an error, since the command was read as the reference timer
@@ -125,7 +125,7 @@ code does.
 | Constant logic | `set_case_analysis`, `set_logic_zero`, `set_logic_one`, `set_logic_dc` |
 | Derating and units | `set_timing_derate`, `set_units` |
 | Design rules | `set_max_transition`, `set_max_fanout`, `set_max_capacitance` |
-| Arcs and senses | `set_disable_timing`, `unset_disable_timing`, `set_clock_sense`, `set_disable_clock_gating_check`, `unset_disable_clock_gating_check` |
+| Arcs and senses | `set_disable_timing`, `unset_disable_timing`, `set_sense`, `set_clock_sense`, `set_disable_clock_gating_check`, `unset_disable_clock_gating_check` |
 <!-- constraints-written:end -->
 
 **Objects.** `get_ports`, `get_pins`, `get_cells`, `get_nets` and `get_clocks` with their
@@ -198,7 +198,8 @@ Every command of the SDC command set, with the SDC version that introduced it an
 engine does with it. The version is the first SDC version whose declaration file, in the
 reference SDC parser Synopsys published with the standard (SDC 1.1 to 2.0), declares the command:
 the singular query spellings (`get_cell`, `get_port`, …) are SDC 1.5, though their plurals are
-1.1. `set_clock_jitter` and `set_disable_clock_gating_check` are declared by no version the
+1.1. ‡ 2.1, per the reference timer's documentation; no public SDC 2.1 document.
+`set_clock_jitter` and `set_disable_clock_gating_check` are declared by no version the
 parser covers, and are listed outside the set. The tables are generated from the command registry in loom
 (`vyges_loom::sdc::registry`), whose own test reads one probe line per command and fails if a
 status is not what the reader does. `cargo run --example coverage_table` prints them, and a test
@@ -222,7 +223,7 @@ code: change it with the consumer.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
 <!-- sdc-coverage:begin -->
-SDC 1.1 to 2.0: 51 applied, 25 kept, 4 Tcl, 1 read past, 0 unhandled, of 81 commands.
+SDC 1.1 to 2.1: 51 applied, 26 kept, 4 Tcl, 1 read past, 0 unhandled, of 82 commands.
 
 | Command | SDC | Status | Applied by |
 | --- | --- | --- | --- |
@@ -299,6 +300,7 @@ SDC 1.1 to 2.0: 51 applied, 25 kept, 4 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_port_fanout_number` | 1.1 | Kept | — |
 | `set_propagated_clock` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_resistance` | 1.1 | Kept | — |
+| `set_sense` | 2.1 ‡ | Kept (without `-type`: read as `-type clock`, the SDC 2.1 default; `-type data` is not modelled) | — |
 | `set_timing_derate` | 1.5 | Applied | `sta`, `sta-si` |
 | `set_unit` | 1.7 | Applied (spelling of `set_units`) | `reader` |
 | `set_units` | 1.7 | Applied | `reader` |
@@ -428,7 +430,7 @@ Reference-timer options no SDC version declares. They are read as the reference 
 
 The Tcl, collection and take-back commands such files use are described under Constraints above.
 
-The version dates follow the public Synopsys reference SDC parser (SDC 1.1 to 2.0). A newer
+The version dates follow the public Synopsys reference SDC parser (SDC 1.1 to 2.0), except `set_sense` (‡). A newer
 release of that parser may date some commands differently.
 
 ### One-edge data checks
@@ -443,6 +445,40 @@ data only. Nothing here times a one-edge check, so:
   `set_data_check: -rise (a check on one data edge) is not modelled; not applied`. Its other data
   checks are applied.
 - The `sta` timer does not model `set_data_check` and refuses a file that has one.
+
+### Clock senses
+
+`set_sense` is the SDC 2.1 command for a sense on a clock or data path, and the replacement for
+`set_clock_sense`, per the reference timer's documentation. Both are read, and both are Kept:
+written back, and applied by no timer here.
+
+| Option | What it does here |
+| --- | --- |
+| `-type clock` | A clock sense: read and written back. |
+| no `-type` | The same as `-type clock`, the SDC 2.1 default, and written back as `-type clock`. |
+| `-type data` | Not modelled: the command is not applied and not written back (a warning). |
+| `-positive`, `-negative`, `-stop_propagation` | Read and written back; no timer here applies them. |
+| `-clocks` | The clocks the sense is for, written back as `[get_clocks …]`. With `-clock`, `-clocks` wins. |
+| `-pulse` | Read and written back; not modelled. |
+
+`check` reports each kind with its count. For `set_sense -stop_propagation [get_pins u1/Q]`:
+
+- `` `set_sense`: kept and written back; it can change timing, and no checker or timer here
+  applies it`` (a warning);
+- `` `set_sense` no -type: applied as clock (SDC 2.1 default); the reference timer ignores it
+  without -type`` (information): a `set_sense` without `-type` is read as clock, as SDC 2.1 says,
+  where the reference timer applies nothing for it.
+
+For `set_sense -type data`, a warning: `` `set_sense -type data`: not modelled, not applied; the
+reference timer does not apply it either``.
+
+`set_clock_sense` is still accepted, is not reported as deprecated, and is written back as given
+(`set_clock_sense`, its options spelled out in full). Its `-clock` option is a reference-timer
+extension, reported at information level like the others.
+
+Neither timer applies a clock sense. The `sta` timer refuses a file that has one:
+`set_sense / set_clock_sense: not modelled by this timer`. The `sta-si` timer reads the file and
+does not apply the sense.
 
 ### Hierarchy separator
 

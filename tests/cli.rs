@@ -481,3 +481,60 @@ fn check_reads_a_real_constraint_file() {
     assert_eq!(codes("warning"), ["sdc-kept-not-applied"], "{out}");
     assert_eq!((v["errors"].as_u64(), v["warnings"].as_u64(), v["kept_not_applied"].as_u64()), (Some(1), Some(1), Some(1)), "{out}");
 }
+
+/// The README's clock-sense section, run: what `check` reports for `set_sense` and
+/// `set_clock_sense` (each message as the README quotes it), and what `write` writes back.
+#[test]
+fn the_readme_claims_about_clock_senses() {
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+    let flat = readme.split_whitespace().collect::<Vec<_>>().join(" ");
+    let check = |name: &str, text: &str| -> Vec<(String, String, String)> {
+        let f = scratch(&format!("{name}.sdc"));
+        std::fs::write(&f, format!("create_clock -name c -period 10 [get_ports clk]\n{text}\n")).unwrap();
+        let (_, out, _) = sdc(&["check", "--sdc", &f, "--json"]);
+        let v = json(&out);
+        let s = |x: &serde_json::Value| x.as_str().unwrap_or("").to_string();
+        v["findings"].as_array().unwrap().iter().map(|f| (s(&f["severity"]), s(&f["code"]), s(&f["message"]))).collect()
+    };
+    let quoted = |m: &str| assert!(flat.contains(&format!("`` {m}``")) || flat.contains(&format!("``{m}``")) || flat.contains(&format!("`{m}`")), "README does not quote: {m}");
+
+    let f = check("sense_no_type", "set_sense -stop_propagation [get_pins u1/Q]");
+    let kept = "`set_sense`: kept and written back; it can change timing, and no checker or timer here applies it";
+    let default = "`set_sense` no -type: applied as clock (SDC 2.1 default); the reference timer ignores it without -type";
+    assert!(f.contains(&("warning".into(), "sdc-kept-not-applied".into(), kept.into())), "{f:?}");
+    assert!(f.contains(&("info".into(), "sdc-sense-type-default".into(), default.into())), "{f:?}");
+    quoted(kept);
+    quoted(default);
+
+    let f = check("sense_data", "set_sense -type data -positive [get_pins u1/Q]");
+    let data = "`set_sense -type data`: not modelled, not applied; the reference timer does not apply it either";
+    assert!(f.contains(&("warning".into(), "sdc-not-applied".into(), data.into())), "{f:?}");
+    assert!(!f.iter().any(|(s, _, _)| s == "error"), "{f:?}");
+    quoted(data);
+
+    // set_clock_sense: kept, not reported as deprecated; -clock is an extension
+    let f = check("clock_sense", "set_clock_sense -neg -clock [get_clocks c] [get_pins u1/Q]");
+    assert!(f.iter().any(|(s, c, m)| s == "warning" && c == "sdc-kept-not-applied" && m.starts_with("`set_clock_sense`")), "{f:?}");
+    assert!(f.iter().any(|(s, c, m)| s == "info" && c == "sdc-extension" && m.starts_with("`set_clock_sense -clock`")), "{f:?}");
+    assert!(!f.iter().any(|(_, _, m)| m.contains("deprecated")), "{f:?}");
+
+    // write: no -type is written as -type clock; set_clock_sense as given, options in full;
+    // -clocks wins over -clock; -pulse is written back; -type data is not written
+    let f = scratch("senses_in.sdc");
+    let o = scratch("senses_out.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name c -period 10 [get_ports clk]\ncreate_clock -name d -period 10 [get_ports clk2]\n\
+         set_sense -stop_propagation [get_pins u1/Q]\nset_clock_sense -neg -clock d -clocks c [get_pins u2/Q]\n\
+         set_sense -type clock -pulse rise_triggered_high_pulse [get_pins u3/Q]\nset_sense -type data -positive [get_pins u4/Q]\n",
+    )
+    .unwrap();
+    let (rc, out, err) = sdc(&["write", "--sdc", &f, "-o", &o, "--partial", "--json", "-qqq"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    let w = std::fs::read_to_string(&o).unwrap();
+    assert!(w.contains("set_sense -type clock -stop_propagation [get_pins {u1/Q}]"), "{w}");
+    assert!(w.contains("set_clock_sense -clocks [get_clocks {c}] -negative [get_pins {u2/Q}]"), "{w}");
+    assert!(w.contains("set_sense -type clock -pulse {rise_triggered_high_pulse} [get_pins {u3/Q}]"), "{w}");
+    assert!(!w.contains("u4/Q"), "{w}");
+    assert!(json(&out)["not_written"].to_string().contains("set_sense"), "{out}");
+}
