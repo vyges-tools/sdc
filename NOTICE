@@ -4,3 +4,12 @@ vyges-sdc
 This product includes software developed by Vyges. Licensed under the Apache
 License, Version 2.0 (see LICENSE). It reads and writes SDC through the
 vyges-loom foundation (Apache-2.0).
+
+Third-party test data
+---------------------
+
+tests/data/coralnpu/rvv_core_mini-asap7.sdc is an unmodified copy of
+synthesis/rvv_core_mini/asap7/constraint.sdc from CoralNPU
+(https://github.com/google-coral/coralnpu, commit
+aa4239301fa7dea060028c3f426fe27742332686). Copyright 2026 Google LLC.
+Licensed under the Apache License, Version 2.0.
