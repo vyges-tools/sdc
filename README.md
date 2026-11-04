@@ -158,110 +158,110 @@ engine does with it. Option-level detail follows the SDC command descriptions; t
 generated from a one-line probe per command and option, run through this engine and through the
 reference timer, so it says only what the code does.
 
-- **Modelled**: read with the reference timer's semantics, and written back.
-- **Kept**: read and written back as it was read; no timer here applies it yet.
+- **Modelled**: read into the constraint model and written back. The table under Constraints
+  lists the ones read with the reference timer's semantics.
 - **Read past**: recognised and skipped (it steers synthesis or power, not timing); `write` lists it
   as not written, and `--partial` writes the rest.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
-SDC 2.1: 33 modelled, 46 kept, 1 read past, 0 unhandled, of 80 commands.
+SDC 2.1: 79 modelled, 1 read past, 0 unhandled, of 80 commands.
 
 <!-- sdc-coverage:begin -->
 | Command | SDC | Status |
 | --- | --- | --- |
-| `all_clocks` | 1.1 | Kept |
-| `all_inputs` | 1.1 | Kept |
-| `all_outputs` | 1.1 | Kept |
-| `all_registers` | 1.7 | Kept |
+| `all_clocks` | 1.1 | Modelled |
+| `all_inputs` | 1.1 | Modelled |
+| `all_outputs` | 1.1 | Modelled |
+| `all_registers` | 1.7 | Modelled |
 | `create_clock` | 1.1 | Modelled |
 | `create_generated_clock` | 1.3 | Modelled |
-| `create_voltage_area` | 1.6 | Kept |
-| `current_design` | 1.1 | Kept |
-| `current_instance` | 1.1 | Kept |
+| `create_voltage_area` | 1.6 | Modelled |
+| `current_design` | 1.1 | Modelled |
+| `current_instance` | 1.1 | Modelled |
 | `expr` | 1.1 | Modelled (Tcl) |
-| `get_cell` | 1.1 | Kept (spelling of `get_cells`) |
-| `get_cells` | 1.1 | Kept |
-| `get_clocks` | 1.1 | Kept |
-| `get_lib_cell` | 1.1 | Kept (spelling of `get_lib_cells`) |
-| `get_lib_cells` | 1.1 | Kept |
-| `get_lib_pin` | 1.1 | Kept (spelling of `get_lib_pins`) |
-| `get_lib_pins` | 1.1 | Kept |
-| `get_libs` | 1.1 | Kept |
-| `get_net` | 1.1 | Kept (spelling of `get_nets`) |
-| `get_nets` | 1.1 | Kept |
-| `get_pin` | 1.1 | Kept (spelling of `get_pins`) |
-| `get_pins` | 1.1 | Kept |
-| `get_port` | 1.1 | Kept (spelling of `get_ports`) |
-| `get_ports` | 1.1 | Kept |
-| `group_path` | 1.7 | Kept |
+| `get_cell` | 1.1 | Modelled (spelling of `get_cells`) |
+| `get_cells` | 1.1 | Modelled |
+| `get_clocks` | 1.1 | Modelled |
+| `get_lib_cell` | 1.1 | Modelled (spelling of `get_lib_cells`) |
+| `get_lib_cells` | 1.1 | Modelled |
+| `get_lib_pin` | 1.1 | Modelled (spelling of `get_lib_pins`) |
+| `get_lib_pins` | 1.1 | Modelled |
+| `get_libs` | 1.1 | Modelled |
+| `get_net` | 1.1 | Modelled (spelling of `get_nets`) |
+| `get_nets` | 1.1 | Modelled |
+| `get_pin` | 1.1 | Modelled (spelling of `get_pins`) |
+| `get_pins` | 1.1 | Modelled |
+| `get_port` | 1.1 | Modelled (spelling of `get_ports`) |
+| `get_ports` | 1.1 | Modelled |
+| `group_path` | 1.7 | Modelled |
 | `list` | 1.1 | Modelled (Tcl) |
 | `set` | 1.1 | Modelled (Tcl) |
 | `set_case_analysis` | 1.1 | Modelled |
-| `set_clock_gating_check` | 1.2 | Kept |
+| `set_clock_gating_check` | 1.2 | Modelled |
 | `set_clock_group` | 1.7 | Modelled (spelling of `set_clock_groups`) |
 | `set_clock_groups` | 1.7 | Modelled |
 | `set_clock_latency` | 1.1 | Modelled |
 | `set_clock_sense` | 1.7 | Modelled |
 | `set_clock_transition` | 1.1 | Modelled |
 | `set_clock_uncertainty` | 1.1 | Modelled |
-| `set_data_check` | 1.4 | Kept |
+| `set_data_check` | 1.4 | Modelled |
 | `set_disable_timing` | 1.1 | Modelled |
-| `set_drive` | 1.1 | Kept |
+| `set_drive` | 1.1 | Modelled |
 | `set_driving_cell` | 1.1 | Modelled |
 | `set_false_path` | 1.1 | Modelled |
-| `set_fanout_load` | 1.1 | Kept |
-| `set_hierarchy_separator` | 1.2 | Kept |
-| `set_ideal_latency` | 1.7 | Kept |
-| `set_ideal_network` | 1.7 | Kept |
-| `set_ideal_transition` | 1.7 | Kept |
+| `set_fanout_load` | 1.1 | Modelled |
+| `set_hierarchy_separator` | 1.2 | Modelled |
+| `set_ideal_latency` | 1.7 | Modelled |
+| `set_ideal_network` | 1.7 | Modelled |
+| `set_ideal_transition` | 1.7 | Modelled |
 | `set_input_delay` | 1.1 | Modelled |
 | `set_input_transition` | 1.1 | Modelled |
-| `set_level_shifter_strategy` | 1.6 | Kept |
-| `set_level_shifter_threshold` | 1.6 | Kept |
+| `set_level_shifter_strategy` | 1.6 | Modelled |
+| `set_level_shifter_threshold` | 1.6 | Modelled |
 | `set_load` | 1.1 | Modelled |
 | `set_logic_dc` | 1.1 | Modelled |
 | `set_logic_one` | 1.1 | Modelled |
 | `set_logic_zero` | 1.1 | Modelled |
-| `set_max_area` | 1.1 | Kept |
+| `set_max_area` | 1.1 | Modelled |
 | `set_max_capacitance` | 1.1 | Modelled |
 | `set_max_delay` | 1.1 | Modelled |
-| `set_max_dynamic_power` | 1.4 | Kept |
+| `set_max_dynamic_power` | 1.4 | Modelled |
 | `set_max_fanout` | 1.1 | Modelled |
-| `set_max_leakage_power` | 1.4 | Kept |
-| `set_max_time_borrow` | 1.1 | Kept |
+| `set_max_leakage_power` | 1.4 | Modelled |
+| `set_max_time_borrow` | 1.1 | Modelled |
 | `set_max_transition` | 1.1 | Modelled |
-| `set_min_capacitance` | 1.1 | Kept |
+| `set_min_capacitance` | 1.1 | Modelled |
 | `set_min_delay` | 1.1 | Modelled |
 | `set_min_porosity` | 1.4 | Read past |
-| `set_min_pulse_width` | 2.0 | Kept |
+| `set_min_pulse_width` | 2.0 | Modelled |
 | `set_multicycle_path` | 1.1 | Modelled |
-| `set_operating_conditions` | 1.1 | Kept |
+| `set_operating_conditions` | 1.1 | Modelled |
 | `set_output_delay` | 1.1 | Modelled |
-| `set_port_fanout_number` | 1.1 | Kept |
+| `set_port_fanout_number` | 1.1 | Modelled |
 | `set_propagated_clock` | 1.1 | Modelled |
-| `set_resistance` | 1.1 | Kept |
+| `set_resistance` | 1.1 | Modelled |
 | `set_sense` | 2.1 | Modelled |
 | `set_timing_derate` | 1.5 | Modelled |
 | `set_unit` | 1.7 | Modelled (spelling of `set_units`) |
 | `set_units` | 1.7 | Modelled |
-| `set_voltage` | 1.8 | Kept |
-| `set_wire_load_min_block_size` | 1.1 | Kept |
-| `set_wire_load_mode` | 1.1 | Kept |
-| `set_wire_load_model` | 1.1 | Kept |
-| `set_wire_load_selection_group` | 1.1 | Kept |
+| `set_voltage` | 1.8 | Modelled |
+| `set_wire_load_min_block_size` | 1.1 | Modelled |
+| `set_wire_load_mode` | 1.1 | Modelled |
+| `set_wire_load_model` | 1.1 | Modelled |
+| `set_wire_load_selection_group` | 1.1 | Modelled |
 <!-- sdc-coverage:end -->
 
 Commands found in constraint files written for other tools, outside the SDC 2.1 command set:
 
 | Command | Status |
 | --- | --- |
-| `remove_propagated_clock` | Kept |
+| `remove_propagated_clock` | Modelled |
 | `set_clock_jitter` | Unhandled |
 | `set_current_design` | Unhandled |
 | `set_dont_touch` | Read past |
-| `set_path_margin` | Kept |
-| `set_pvt` | Kept |
-| `unset_propagated_clock` | Kept |
+| `set_path_margin` | Modelled |
+| `set_pvt` | Modelled |
+| `unset_propagated_clock` | Modelled |
 
 The Tcl, collection and take-back commands such files use are described under Constraints above.
 
