@@ -85,7 +85,9 @@ file as a `# not written:` line. The JSON result says `complete: false` either w
 
 Malformed constraints are refused when the file is read rather than guessed at. For example, a
 `-period` given with a unit (`20ns`, `"1 MHz"`) is an error, because SDC periods are plain
-numbers in the file's time unit.
+numbers in the file's time unit. A design-rule limit (`set_max_capacitance`, `set_max_fanout`,
+`set_max_transition`) without its value or its objects, with an option it does not have, or with a
+value that is not a positive number is refused with a message.
 
 ## Constraints
 
