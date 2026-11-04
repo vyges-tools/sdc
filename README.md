@@ -134,7 +134,10 @@ patterns, `all_inputs`, `all_outputs`, `all_clocks`, `all_registers`, and Tcl li
 (`-filter`, `-of_objects`, `-regexp`) are evaluated against the design. Every input or output but
 some is read in both common spellings:
 `[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]` and
-`[remove_from_collection [all_inputs] clk]`.
+`[remove_from_collection [all_inputs] clk]`. Options no SDC version declares, such as
+`get_pins -leaf` and `get_nets -segments`, are refused (the command is not applied), as the
+reference timer refuses them. With the libraries and a netlist, `[load_of lib/cell/pin]` is that
+library pin's capacitance; without them its command is not applied.
 
 **SDC options the reference timer lacks** are read, never refused: `-level_sensitive` on
 `set_input_delay` / `set_output_delay`, `-min` / `-max` on `set_timing_derate`, `-clock` /
@@ -154,7 +157,9 @@ written back when the proc returns), `dict` (`create`, `set`, `get`, `exists`, `
 `size`, `merge`, `unset`, `lappend`, `append`, `incr` and `for`, in insertion order), `source`
 (read in place, from the working directory and then from the reading file's directory; a `return`
 at a file's top level ends that file), `puts`, and abbreviated command and option names, expanded
-as the reference expands them. Nothing is substituted inside braces, as in Tcl. The singular
+as the reference expands them. Nothing is substituted inside braces, as in Tcl. Reading a variable
+that is not defined is Tcl's error and stops the read there (exit 2), as it stops the reference
+timer: `can't read "X": no such variable`. A flow's variables are given with `--define`. The singular
 query spellings (`get_port`, `get_cell`, …) are the plural queries.
 
 **Files written for another tool.** Constraint files that DFT insertion and signoff tools write
@@ -328,7 +333,7 @@ Commands outside the SDC versions the reference parser declares, found in constr
 | `get_designs` | Not applied | — |
 | `get_object_name` | Applied | `reader` |
 | `index_collection` | Not applied | — |
-| `load_of` | Not applied | — |
+| `load_of` | Not applied (with the libraries and a netlist: the library pin's capacitance; without them, not applied) | — |
 | `remove_from_collection` | Applied (only as every input or output but some, the objects of an I/O delay) | `reader` |
 | `remove_propagated_clock` | Applied | `reader` |
 | `set_clock_jitter` | Unhandled | — |
@@ -477,8 +482,9 @@ reference timer does not apply it either``.
 extension, reported at information level like the others.
 
 Neither timer applies a clock sense. The `sta` timer refuses a file that has one:
-`set_sense / set_clock_sense: not modelled by this timer`. The `sta-si` timer reads the file and
-does not apply the sense.
+`set_sense / set_clock_sense: not modelled by this timer`. The `sta-si` timer reads the file, does
+not apply the sense, and warns once per kind with its count: `` sdc: `set_sense` (2 commands):
+kept and written back; not applied by this timer`` (`STA-SDC-NOT-APPLIED`).
 
 ### Hierarchy separator
 

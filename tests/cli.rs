@@ -315,6 +315,29 @@ fn a_define_is_set_before_the_file_is_read() {
     assert!(std::fs::read_to_string(&o).unwrap().contains("-period 5"));
     let (rc, _, _) = sdc(&["check", "--sdc", &f, "--define", "F"]);
     assert_eq!(rc, 2);
+    // undefined, the variable is Tcl's error, which stops the read (the README's message)
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--json"]);
+    assert_eq!(rc, 2);
+    assert!(format!("{out}{err}").contains("can't read \\\"F\\\": no such variable") || format!("{out}{err}").contains("can't read \"F\": no such variable"), "{out}{err}");
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+    assert!(readme.contains("`can't read \"X\": no such variable`"));
+}
+
+/// With the libraries and a netlist, `[load_of lib/cell/pin]` is the library pin's capacitance
+/// (as `set_load` takes it, in the library's unit); without them the command is not applied.
+#[test]
+fn load_of_reads_the_library_pin_with_the_libraries() {
+    let f = scratch("load_of.sdc");
+    std::fs::write(&f, "create_clock -name clk -period 10 [get_ports clk]\nset_load [load_of seq_demo/BUF/A] [get_ports dout]\n").unwrap();
+    let o = scratch("load_of.out.sdc");
+    let mut a = vec!["write", "--sdc", f.as_str(), "-o", o.as_str(), "-qqq"];
+    a.extend(DESIGN);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(std::fs::read_to_string(&o).unwrap().contains("set_load 0.0015 [get_ports {dout}]"), "{}", std::fs::read_to_string(&o).unwrap());
+    let (rc, out, _) = sdc(&["check", "--sdc", &f, "--json"]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("not evaluated: no library was given"), "{out}");
 }
 
 /// A hierarchical netlist is flattened before checking, as the timer reads it: an exception on
