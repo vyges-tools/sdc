@@ -255,11 +255,11 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `group_path` | 1.7 | Kept | — |
 | `list` | Tcl | Tcl | — |
 | `set` | Tcl | Tcl | — |
-| `set_case_analysis` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_case_analysis` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
 | `set_clock_gating_check` | 1.2 | Kept | — |
 | `set_clock_group` | 1.7 | Applied (spelling of `set_clock_groups`) | `sta`, `sta-si` |
 | `set_clock_groups` | 1.7 | Applied | `sta`, `sta-si` |
-| `set_clock_latency` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_clock_latency` | 1.1 | Applied (`sta-si`: only as included in an I/O delay (`-source_latency_included`, `-network_latency_included`)) | `sta`, `sta-si` |
 | `set_clock_sense` | 1.7 | Kept | — |
 | `set_clock_transition` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_clock_uncertainty` | 1.1 | Applied | `sta`, `sta-si` |
@@ -278,9 +278,9 @@ SDC 1.1 to 2.1: 51 applied, 26 kept, 3 Tcl, 1 read past, 0 unhandled, of 81 comm
 | `set_level_shifter_strategy` | 1.6 | Kept | — |
 | `set_level_shifter_threshold` | 1.6 | Kept | — |
 | `set_load` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_logic_dc` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_logic_one` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_logic_zero` | 1.1 | Applied | `sta`, `sta-si` |
+| `set_logic_dc` | 1.1 | Applied (through its logic simulation, with the design) | `sta` |
+| `set_logic_one` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
+| `set_logic_zero` | 1.1 | Applied (`sta`: through its logic simulation, with the design) | `sta`, `sta-si` |
 | `set_max_area` | 1.1 | Kept | — |
 | `set_max_capacitance` | 1.1 | Applied | `rsz` |
 | `set_max_delay` | 1.1 | Applied | `check`, `sta` |
