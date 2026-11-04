@@ -113,6 +113,16 @@ some is read in both common spellings:
 `[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]` and
 `[remove_from_collection [all_inputs] clk]`.
 
+**SDC options the reference timer lacks** are read, never refused: `-level_sensitive` on
+`set_input_delay` / `set_output_delay`, `-min` / `-max` on `set_timing_derate`, `-clock` /
+`-clock_fall` on `set_driving_cell`, the `all_inputs`, `all_outputs` and `all_registers` options,
+`-unit` on the power limits, `-object_list` on `set_operating_conditions` and `-group_name` on
+`set_wire_load_selection_group`. Each is written back, and `check` reports it as kept but not
+applied: a command whose meaning it changes (a clock-scoped drive, an input list selected by
+clock) is kept as written rather than applied as if the option were not there. `get_ports
+-hierarchical` is `get_ports` (a port is at the top level), and `set_load -substract_pin_load` is
+`-subtract_pin_load`. The table at the end of the command coverage lists them.
+
 **Tcl.** The subset constraint files use: `set` and variables (`$name`, `${name}`,
 `$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `switch`, `expr`, `proc` (each call
 runs its body with its parameters bound and its own local variables; `return` ends it, and a proc
