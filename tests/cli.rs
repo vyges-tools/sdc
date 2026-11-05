@@ -584,3 +584,26 @@ fn the_readme_design_rule_examples_hold() {
     assert!(f.contains("sdc-kept-not-applied") && f.contains("set_max_capacitance -clock_path"), "{f}");
     assert!(!f.contains("is not an option"), "{f}");
 }
+
+/// The README's `set_current_design` claim: read as `current_design`, so the file is read and
+/// checked; with a netlist whose top it does not name, `check` warns (`current-design-not-top`).
+#[test]
+fn set_current_design_is_read_and_warns_on_another_design() {
+    assert!(include_str!("../README.md").contains("`current-design-not-top`"), "README");
+    let dir = scratch("current_design");
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str| {
+        let f = format!("{dir}/{name}.sdc");
+        std::fs::write(&f, format!("set_current_design {name}\n{}", std::fs::read_to_string("tests/data/clean.sdc").unwrap())).unwrap();
+        let mut a = vec!["check", "--sdc", f.as_str(), "--json", "-qqq"];
+        a.extend(DESIGN);
+        let (rc, out, err) = sdc(&a);
+        (rc, json(&out)["findings"].to_string(), err)
+    };
+    let (rc, f, err) = run("t");
+    assert_eq!(rc, 0, "{f} {err}");
+    assert!(!f.contains("current-design-not-top"), "{f}");
+    let (rc, f, err) = run("other");
+    assert_ne!(rc, 2, "the read stopped: {err}");
+    assert!(f.contains("current-design-not-top"), "{f}");
+}

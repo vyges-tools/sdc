@@ -222,7 +222,9 @@ the singular query spellings (`get_cell`, `get_port`, …) are SDC 1.5, though t
 1.1. ‡ 2.1, per the reference timer's documentation; no public SDC 2.1 document. † Declared in
 that version by the vendor's releases of the parser, and by none of the public release's files:
 releases differ, and newer ones declare more in SDC 1.8 (see "SDC 1.8 in newer vendor releases"
-above); a command or option marked † is SDC here.
+above); a command or option marked † is SDC here. `set_current_design` (1.1 †) is read as
+`current_design`; with a netlist, `check` warns when either names a design other than the
+netlist's top (`current-design-not-top`), and the constraints are applied to the top.
 
 The public release these versions are dated from is the copy distributed in the OpenTimer
 project's `ot/sdc/` directory (commit `cd0565f`), whose declaration files are:
@@ -267,7 +269,7 @@ code: change it with the consumer.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
 <!-- sdc-coverage:begin -->
-SDC 1.1 to 2.1: 55 applied, 26 kept, 4 Tcl, 2 read past, 4 not applied, 1 unhandled, of 92 commands.
+SDC 1.1 to 2.1: 56 applied, 26 kept, 4 Tcl, 2 read past, 4 not applied, 0 unhandled, of 92 commands.
 
 | Command | SDC | Status | Applied by |
 | --- | --- | --- | --- |
@@ -316,7 +318,7 @@ SDC 1.1 to 2.1: 55 applied, 26 kept, 4 Tcl, 2 read past, 4 not applied, 1 unhand
 | `set_clock_sense` | 1.7 | Kept | — |
 | `set_clock_transition` | 1.1 | Applied | `sta`, `sta-si` |
 | `set_clock_uncertainty` | 1.1 | Applied | `sta`, `sta-si` |
-| `set_current_design` | 1.1 † | Unhandled | — |
+| `set_current_design` | 1.1 † | Applied (read as `current_design`; `check` warns when it names a design other than the netlist's top) | `reader` |
 | `set_data_check` | 1.4 | Applied (`-rise` / `-fall`: kept, not applied) | `sta-si` |
 | `set_disable_timing` | 1.1 | Applied | `sta-si` |
 | `set_dont_touch` | 1.1 † | Read past | — |
