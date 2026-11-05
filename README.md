@@ -56,7 +56,7 @@ could not (the area and power limits `set_max_area`, `set_max_dynamic_power`,
 reads it. The JSON result counts them in `kept_not_applied`.
 
 It names, at information level and with a count, each command or option the file uses that the
-reference timer reads but no SDC version declares (`get_ports -filter`, `-reset_path`, `set_pvt`,
+reference timer reads but no SDC version declares (`get_clocks -filter`, `-reset_path`, `set_pvt`,
 the `unset_*` commands; the last table below lists the options). The file is read as the
 reference timer reads it; another SDC reader may refuse it.
 
@@ -153,17 +153,17 @@ clock) is kept as written rather than applied as if the option were not there. `
 parser's own spelling, are `-rise_through` / `-fall_through`. The table at the end of the command
 coverage lists them.
 
-**SDC 1.8 in newer vendor releases.** Newer releases of the vendor's SDC parser declare more in
-SDC 1.8 than its public release (†): `-filter` and `-quiet` on the object queries, `get_pins
--of_objects`, `set_load -rise` / `-fall` / `-internal` / `-allow_negative_cap`,
-`set_max_transition -data_path` / `-delay_penalty` / `-force`, `set_max_capacitance -clock_path`
-/ `-data_path` / `-rise` / `-fall` / `-force` / `-scenarios`, the collection commands
+**SDC 1.8 in newer vendor releases.** Vendor SDC 1.8 declares more than the public release of
+the vendor's SDC parser, and how much more varies by release (†): `-filter` and `-quiet` on the
+object and library queries, `get_pins -of_objects`, `set_load -rise` / `-fall` / `-internal` /
+`-allow_negative_cap`, `set_max_transition -data_path` / `-delay_penalty` (a flag, taking no
+value) / `-force`, `set_max_capacitance -clock_path` / `-data_path` / `-rise` / `-fall` /
+`-force` / `-sms_scenarios`, the collection commands
 (`add_to_collection`, `append_to_collection`, `remove_from_collection`, `filter_collection`) and
 `all_fanin` / `all_fanout`. They are SDC 1.8 here too: read, never refused, and not named as
 reference-timer extensions. An option the reference timer has is applied as it applies it; the
 others are kept with their command and reported as kept but not applied. Every option any SDC
-version declares, public or vendor, is read by a test that fails on a refusal. Whether
-`set_max_transition -delay_penalty` takes a value is not public; it is read as taking one.
+version declares, public or vendor, is read by a test that fails on a refusal.
 
 **Tcl.** The subset constraint files use: `set` and variables (`$name`, `${name}`,
 `$::env(NAME)`), `if`/`elseif`/`else`, `foreach` over a list, `switch`, `expr`, `proc` (each call
@@ -438,8 +438,11 @@ Options newer releases of the vendor's SDC parser declare in SDC 1.8, and its pu
 | `get_cells` | `-filter` | has it | Applied |
 | `get_cells` | `-quiet` | has it | Applied |
 | `get_clocks` | `-quiet` | has it | Applied |
+| `get_lib_cells` | `-filter` | has it | Applied |
 | `get_lib_cells` | `-quiet` | has it | Applied |
+| `get_lib_pins` | `-filter` | has it | Applied |
 | `get_lib_pins` | `-quiet` | has it | Applied |
+| `get_libs` | `-filter` | has it | Applied |
 | `get_libs` | `-quiet` | has it | Applied |
 | `get_nets` | `-filter` | has it | Applied |
 | `get_nets` | `-quiet` | has it | Applied |
@@ -457,7 +460,7 @@ Options newer releases of the vendor's SDC parser declare in SDC 1.8, and its pu
 | `set_max_capacitance` | `-rise` | lacks it | Kept |
 | `set_max_capacitance` | `-fall` | lacks it | Kept |
 | `set_max_capacitance` | `-force` | lacks it | Kept |
-| `set_max_capacitance` | `-scenarios` | lacks it | Kept |
+| `set_max_capacitance` | `-sms_scenarios` | lacks it | Kept |
 | `set_max_transition` | `-data_path` | has it | Applied |
 | `set_max_transition` | `-delay_penalty` | lacks it | Kept |
 | `set_max_transition` | `-force` | lacks it | Kept |
@@ -468,11 +471,8 @@ Reference-timer options no SDC version declares. They are read as the reference 
 | --- | --- |
 | `all_inputs` | `-no_clocks` |
 | `get_clocks` | `-filter` |
-| `get_lib_cells` | `-filter` |
 | `get_lib_cells` | `-of_objects` |
-| `get_lib_pins` | `-filter` |
 | `get_lib_pins` | `-of_objects` |
-| `get_libs` | `-filter` |
 | `get_ports` | `-nocase` |
 | `get_ports` | `-of_objects` |
 | `group_path` | `-critical_range` |
