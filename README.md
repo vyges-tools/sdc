@@ -205,7 +205,7 @@ constraints after them are applied. `write` lists each one as not written, since
 writes is for timing; `--partial` writes the rest.
 
 **Everything else** the reference reads is read too. Constraints no checker or timer here applies
-yet (`group_path`, `set_min_pulse_width`, `set_max_time_borrow`, the wire-load and
+yet (`set_min_pulse_width`, `set_max_time_borrow`, the wire-load and
 operating-condition commands, for example) are kept and written back as they were read, and
 `check` reports each one. A command
 the reference runs but that is no constraint (a tool setting such as `set_assigned_delay`) is
@@ -269,7 +269,7 @@ code: change it with the consumer.
 - **Unhandled**: not read; the file stops there (exit 2), as it does in the reference timer.
 
 <!-- sdc-coverage:begin -->
-SDC 1.1 to 2.1: 56 applied, 26 kept, 4 Tcl, 2 read past, 4 not applied, 0 unhandled, of 92 commands.
+SDC 1.1 to 2.1: 57 applied, 25 kept, 4 Tcl, 2 read past, 4 not applied, 0 unhandled, of 92 commands.
 
 | Command | SDC | Status | Applied by |
 | --- | --- | --- | --- |
@@ -304,7 +304,7 @@ SDC 1.1 to 2.1: 56 applied, 26 kept, 4 Tcl, 2 read past, 4 not applied, 0 unhand
 | `get_pins` | 1.1 | Applied | `reader` |
 | `get_port` | 1.5 | Applied (spelling of `get_ports`) | `reader` |
 | `get_ports` | 1.1 | Applied | `reader` |
-| `group_path` | 1.7 | Kept | — |
+| `group_path` | 1.7 | Applied (`sta`: `-name` groups, their path ends reported; no slack moves with it) | `sta` |
 | `if` | Tcl | Tcl (a condition the file alone decides (`info exists`, a variable); one on a query's result needs the design and is listed as not applied) | — |
 | `list` | Tcl | Tcl | — |
 | `remove_from_collection` | 1.8 † | Applied (only as every input or output but some, the objects of an I/O delay) | `reader` |

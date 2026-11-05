@@ -484,8 +484,8 @@ fn another_hierarchy_separator_stops_the_read() {
 
 /// A real constraint file (`tests/data/coralnpu/`, Apache-2.0, unmodified), checked without a
 /// netlist: the two `if` blocks whose condition is the length of an object query need the
-/// design and are an error (not applied); `group_path` is kept and a warning; nothing else is
-/// an error or a warning. `CLK_PERIOD_PS` is removed so the file takes its own period.
+/// design and are an error (not applied); nothing else is an error or a warning (`group_path`
+/// is applied by the `sta` timer). `CLK_PERIOD_PS` is removed so the file takes its own period.
 #[test]
 fn check_reads_a_real_constraint_file() {
     let o = Command::new(env!("CARGO_BIN_EXE_vyges-sdc"))
@@ -501,8 +501,8 @@ fn check_reads_a_real_constraint_file() {
         v["findings"].as_array().unwrap().iter().filter(|f| f["severity"] == sev).map(|f| f["code"].as_str().unwrap().to_string()).collect()
     };
     assert_eq!(codes("error"), ["sdc-not-applied"], "{out}");
-    assert_eq!(codes("warning"), ["sdc-kept-not-applied"], "{out}");
-    assert_eq!((v["errors"].as_u64(), v["warnings"].as_u64(), v["kept_not_applied"].as_u64()), (Some(1), Some(1), Some(1)), "{out}");
+    assert!(codes("warning").is_empty(), "{out}");
+    assert_eq!((v["errors"].as_u64(), v["warnings"].as_u64(), v["kept_not_applied"].as_u64()), (Some(1), Some(0), Some(0)), "{out}");
 }
 
 /// The README's clock-sense section, run: what `check` reports for `set_sense` and
