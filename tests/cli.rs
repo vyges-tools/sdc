@@ -561,3 +561,26 @@ fn the_readme_claims_about_clock_senses() {
     assert!(!w.contains("u4/Q"), "{w}");
     assert!(json(&out)["not_written"].to_string().contains("set_sense"), "{out}");
 }
+
+/// The README's design-rule examples: `set_max_fanout -clock_path` (an option no SDC gives it) is
+/// an error, and `set_max_capacitance -clock_path` (SDC 1.8 in newer vendor releases) is read,
+/// kept and reported as kept but not applied, never refused.
+#[test]
+fn the_readme_design_rule_examples_hold() {
+    let readme = include_str!("../README.md").split_whitespace().collect::<Vec<_>>().join(" ");
+    let dir = scratch("design_rules");
+    std::fs::create_dir_all(&dir).unwrap();
+    let check = |name: &str, line: &str| {
+        assert!(readme.contains(&format!("`{line}`")), "the README does not quote `{line}`");
+        let f = format!("{dir}/{name}.sdc");
+        std::fs::write(&f, format!("create_clock -name c -period 10 [get_ports clk]\n{line}\n")).unwrap();
+        let (rc, out, _) = sdc(&["check", "--sdc", f.as_str(), "--json", "-qqq"]);
+        (rc, json(&out)["findings"].to_string())
+    };
+    let (rc, f) = check("fanout", "set_max_fanout -clock_path 8 [get_clocks c]");
+    assert_eq!(rc, 1, "{f}");
+    assert!(f.contains("-clock_path is not an option of set_max_fanout"), "{f}");
+    let (_, f) = check("cap", "set_max_capacitance -clock_path 0.1 [get_clocks c]");
+    assert!(f.contains("sdc-kept-not-applied") && f.contains("set_max_capacitance -clock_path"), "{f}");
+    assert!(!f.contains("is not an option"), "{f}");
+}
