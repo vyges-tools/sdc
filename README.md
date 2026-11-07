@@ -1,12 +1,18 @@
 # vyges-sdc
 
-A **Loom engine** for **SDC timing constraints**: it checks them, and it writes them.
+A **Loom engine** for **SDC timing constraints**: it checks them, writes them, and compares two
+sets of them.
 
 A timer computes timing on whatever constraints it is given. A constraint that is wrong does not
 produce a wrong-looking report; it produces a **clean** one. An output with no
 `set_output_delay` is a path nobody checks. A clock on a port that drives nothing leaves every
 register untimed while the SDC still looks populated. A `set_false_path` with a typo names
 nothing and quietly does nothing. `vyges-sdc check` looks for exactly these.
+
+Constraints also change: an edit, a new delivery, a netlist flow's copy of the RTL one. A text diff
+of two constraint files shows every reordering and reformatting and hides what matters.
+`vyges-sdc diff` says which constraints changed and whether each change loosens or tightens what
+is checked.
 
 ## Usage
 
@@ -106,37 +112,6 @@ file as a `# not written:` line. The JSON result says `complete: false` either w
   "not_written": [ "not modelled: set_assigned_delay" ] }
 ```
 
-### `diff`
-
-`diff` compares two SDC files as constraints, not as text. It reports each constraint that was
-added, removed or changed, and whether the change **loosens** what is checked (a longer period,
-a new false path, a larger multicycle), **tightens** it, is **neutral** (a `-comment`), or is
-**unknown** (no rule decides it, such as one I/O delay for both `-min` and `-max`).
-
-These are not differences:
-
-- the order of commands, or of names inside a list;
-- one command on several ports, against one command per port;
-- a value a later command in the same file overrides (the overridden one is listed as
-  `superseded`).
-
-Objects are compared as written. With `--netlist`, both files are read against the design, so
-queries are compared by the objects they resolve to. `--map` renames the first file's objects
-before comparing (a JSON object of old name to new name; a name, or the instance part of a pin),
-so an RTL constraint file can be compared with a netlist one.
-
-**What cannot be compared is said.** A command either file holds that the model does not carry
-is listed under `not_compared`, and the two files are then not reported as equivalent, even when
-no change was found. Exit 0 means equivalent; exit 1 means they differ or something was not
-compared.
-
-```jsonc
-{ "command": "diff", "equivalent": false,
-  "by_direction": { "loosens": 0, "tightens": 1, "neutral": 0, "unknown": 0 },
-  "changes": [ { "kind": "removed", "direction": "tightens", "command": "set_false_path",
-                 "key": "set_false_path -from get_ports -quiet {io_aresetn}" } ] }
-```
-
 Malformed constraints are refused when the file is read rather than guessed at. For example, a
 `-period` given with a unit (`20ns`, `"1 MHz"`) is an error, because SDC periods are plain
 numbers in the file's time unit. A design-rule limit (`set_max_capacitance`, `set_max_fanout`,
@@ -146,6 +121,70 @@ error: `set_max_capacitance 0.2` (no objects) and `set_max_fanout -clock_path 8 
 (`set_max_fanout` has no option) are both errors. `set_max_capacitance -clock_path 0.1 [get_clocks
 c]` is SDC 1.8 in newer releases of the vendor's SDC parser (†): it is read, kept as written and
 reported as kept but not applied.
+
+### `diff`
+
+`diff` compares two SDC files as constraints, not as text: an edit against the next, one
+delivery against the next, or an RTL constraint file against the netlist one. It reports each
+constraint that was added, removed or changed, and what the change does to what is checked:
+
+| Direction | Means | Examples |
+| --- | --- | --- |
+| loosens | fewer or easier checks | a longer period; a new false path; a larger multicycle; a smaller `-max` I/O delay; a removed clock or I/O delay |
+| tightens | more or harder checks | a shorter period; a larger uncertainty; a removed false path; a larger load |
+| neutral | nothing checked changes | a changed `-comment` |
+| unknown | no rule decides it | one I/O delay for both `-min` and `-max` (tighter setup, looser hold); a waveform; a latency; an unmodelled command |
+
+A gate that must not let constraints loosen unnoticed treats `unknown` as it treats `loosens`.
+
+**What is a difference, and what is not.** Each constraint is identified by what it is ON: its
+command, its flags, the options that name what it applies to (`-clock`, `-from`, `-to`,
+`-through`, `-name`, …) and its objects. A clock is identified by its name alone, so a new
+period or source is a change to that clock, not a new one. What it SAYS (the numbers, the other
+options, `-comment`) is compared field by field. These are not differences:
+
+- the order of commands, or of names inside a list;
+- one command on several ports, against one command per port;
+- a value a later command in the same file overrides, as SDC's own merge does; the overridden
+  command is listed as `superseded`.
+
+**Objects** are compared as written. With `--netlist`, both files are read against the design, so
+queries are compared by the objects they resolve to. `--map` renames the first file's objects
+before comparing: a JSON object of old name to new name, matched against a whole name or the
+instance part of a pin, longest first. That is how an RTL constraint file is compared with a
+netlist one.
+
+```sh
+vyges physical sdc diff --sdc rtl.sdc --against netlist.sdc --map names.json
+```
+```text
+changed  loosens   create_clock -name io_aclk  -period 5000 -> 6000
+changed  tightens  set_clock_uncertainty -setup get_clocks {all_clocks}  value 250 -> 300
+removed  tightens  set_false_path -from get_ports -quiet {io_aresetn}  set_false_path -from [get_ports -quiet io_aresetn]
+```
+
+**Commands the model does not carry are compared by their text.** An `if` block that needs the
+design to evaluate, or a command the reader reads past, is compared as the reader read it: its
+text, with whitespace collapsed, its variables substituted, and the values of the variables it
+names. The same text on both sides is the same constraint; a text on one side only is a change of
+direction `unknown`.
+
+**What cannot be compared is said.** A rejected command, or any unmodelled command when `--map` is
+given (a raw text cannot be renamed faithfully), is listed under `not_compared`, and the two files
+are then never reported as equivalent, even when no change was found. Values are compared in the
+units each file declared; when the two declare different `set_units`, `units_differ` says so.
+
+```jsonc
+{ "command": "diff", "status": "finding", "equivalent": false,
+  "by_direction": { "loosens": 0, "tightens": 1, "neutral": 0, "unknown": 0 },
+  "changes": [ { "kind": "removed", "direction": "tightens", "command": "set_false_path",
+                 "key": "set_false_path -from get_ports -quiet {io_aresetn}", "fields": [],
+                 "a": "set_false_path -from [get_ports -quiet io_aresetn]", "b": null } ],
+  "not_compared": { "sdc": [], "against": [] },
+  "superseded": { "sdc": [], "against": [] }, "units_differ": false }
+```
+
+Exit 0 means equivalent; exit 1 means the files differ or something was not compared.
 
 ## Constraints
 
@@ -593,15 +632,16 @@ would not resolve. For `set_hierarchy_separator .` the message is:
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written |
-| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), or `write` refused |
+| 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written; `diff`: equivalent |
+| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), `write` refused, or `diff` found a change or a command it could not compare |
 | 2 | usage, or an input that could not be read |
 
 Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a terminal
 (`VYGES_LOG_FORMAT=json|text` forces either). Each event names the SDC file as its object:
 - one `SDC-<finding>` per check finding, such as `SDC-UNCONSTRAINED-OUTPUT`;
-- one `SDC-NOT-WRITTEN` per dropped command;
-- a summary, `SDC-CHECK` or `SDC-WRITE`;
+- one `SDC-NOT-WRITTEN` per dropped command (for `diff`, per command not compared);
+- one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
+- a summary, `SDC-CHECK`, `SDC-WRITE` or `SDC-DIFF`;
 - at debug, `SDC-READ`, which says what the file held.
 
 `-q`/`-v` follow the suite's verbosity contract. They repeat: `-q` warnings, `-qq` errors,
@@ -612,14 +652,16 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
 
 ## As a Loom engine
 
-`vyges-sdc --describe` publishes a structured contract. `vyges mcp` then advertises two typed
+`vyges-sdc --describe` publishes a structured contract. `vyges mcp` then advertises three typed
 tools an agent can drive:
 - `sdc`, the check, which asserts `clean`;
-- `sdc.write`, which asserts `complete` and has the written SDC as its artifact.
+- `sdc.write`, which asserts `complete` and has the written SDC as its artifact;
+- `sdc.diff`, which asserts `equivalent`.
 
 Once installed (`vyges install physical`), they are discoverable.
 
-The checker and the writer are the `vyges-loom` implementations (`sdc_lint` and `Sdc::write`).
+The checker, the writer and the comparison are the `vyges-loom` implementations (`sdc_lint`,
+`Sdc::write` and `sdc_diff`).
 The timing engine runs the same code, so `vyges-sdc check` and the timer always agree about what
 a file says.
 

@@ -61,6 +61,7 @@ COMMANDS:
           one command on several ports against one per port, and a value a later command
           overrides are not differences. Objects are compared as written; --netlist reads both
           files against the design, so the objects queries resolve to are compared instead.
+          A command the model does not carry is compared by its text, variables substituted.
 
 OPTIONS:
   --sdc FILE            the SDC to read

@@ -624,11 +624,34 @@ fn diff_of_a_file_against_itself_is_equivalent() {
     assert_eq!(changes(&v).len(), 0);
 }
 
-/// What cannot be compared is said: the real file's `if` blocks need the design to evaluate, so
-/// even against itself (no change found) it is NOT reported equivalent, and exit is 1.
+/// The real file against itself is equivalent: its `if` blocks, which need the design to
+/// evaluate, are compared by their text.
+#[test]
+fn diff_compares_unevaluated_blocks_by_their_text() {
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", CORAL, "--json"]);
+    assert_eq!(rc, 0, "{err}{out}");
+    assert_eq!(json(&out)["equivalent"], true, "{out}");
+    // and a changed block body is a change
+    let text = std::fs::read_to_string(CORAL).unwrap();
+    let body = "  set_case_analysis 0 $te_port\n";
+    assert!(text.contains(body), "the test file still has the test-mode case analysis");
+    let b = scratch("coral-te-1.sdc");
+    std::fs::write(&b, text.replace(body, "  set_case_analysis 1 $te_port\n")).unwrap();
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", &b, "--json"]);
+    assert_eq!(rc, 1, "{err}{out}");
+    let c = changes(&json(&out));
+    assert_eq!(c.len(), 2, "the old block removed, the new one added: {out}");
+    assert!(c.iter().all(|c| c["direction"] == "unknown"), "{out}");
+}
+
+/// What cannot be compared is said: with a rename map, a raw text cannot be renamed faithfully,
+/// so the real file's `if` blocks are not compared, and even against itself it is NOT reported
+/// equivalent.
 #[test]
 fn diff_never_calls_a_file_with_uncompared_commands_equivalent() {
-    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", CORAL, "--json"]);
+    let m = scratch("noop-map.json");
+    std::fs::write(&m, r#"{"no_such_instance": "other"}"#).unwrap();
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", CORAL, "--map", &m, "--json"]);
     assert_eq!(rc, 1, "{err}{out}");
     let v = json(&out);
     assert_eq!(changes(&v).len(), 0, "{out}");
