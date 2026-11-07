@@ -334,6 +334,37 @@ fn check_reports_shadowed_conflicting_and_redundant_exceptions() {
     assert!(text.contains("set_multicycle_path 2 -through"), "the earlier one is the one replaced: {text}");
 }
 
+/// Clock groups read as the reference reads them: `-include_generated_clocks` is ignored (so the
+/// divided clock is in no group and is timed against B), a group of patterns holds the clocks
+/// they match, and two clocks of one family in different asynchronous groups are named.
+#[test]
+fn check_reports_clock_groups_that_do_not_say_what_they_appear_to() {
+    let dir = scratch("clockgroups");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/g.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name A -period 10 [get_ports clka]\n\
+         create_clock -name B -period 7 [get_ports clkb]\n\
+         create_generated_clock -name A_DIV2 -source [get_ports clka] -divide_by 2 [get_pins rdiv/Q]\n\
+         set_clock_groups -asynchronous -include_generated_clocks -group A -group B\n\
+         set_clock_groups -asynchronous -name fam -group A -group [get_clocks A_*]\n",
+    )
+    .unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--json", "-qqq"]);
+    assert_eq!(rc, 0, "warnings leave the exit code at 0: {err}{out}");
+    let v = json(&out);
+    let codes: Vec<String> = v["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter_map(|x| x["code"].as_str().filter(|c| c.starts_with("clock-") || *c == "sdc-word-ignored").map(String::from))
+        .collect();
+    assert_eq!(codes, ["clock-generated-ungrouped", "clock-related-declared-async", "sdc-word-ignored"], "{v}");
+    let text = v["findings"].to_string();
+    assert!(text.contains("times `A_DIV2` against `B`"), "{text}");
+}
+
 /// Waivers round trip: `--write-waivers` writes a template for the active findings, a filled-in
 /// copy waives them all (listed as waived, counted as nothing), a removed waiver brings back
 /// exactly its finding, a waiver for nothing is stale, and the template is never overwritten.

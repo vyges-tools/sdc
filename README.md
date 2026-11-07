@@ -91,6 +91,18 @@ exception names, with the same query, every object the covered one names (a patt
 them). A clock that launches a pin, or a cell that owns a pin, is not resolved, so the check can
 miss an overlap but does not report a false one.
 
+It reports **clock groups that do not say what they appear to**, with the groups read as the
+reference timer reads them: a group holds exactly the clocks its `-group` names (each word a
+pattern over the clocks defined before the command), and a command with one group separates its
+clocks from every other clock.
+
+| code | severity | meaning |
+|---|---|---|
+| `clock-generated-ungrouped` | warning | A generated clock is in no group of a command that groups its master: it is timed against the other groups, or, under a one-group command, cut from its own master |
+| `clock-related-declared-async` | warning | Two clocks of one family (one generated from the other, or both from one clock) are in different `-asynchronous` groups: their paths go untimed, which is right only if every crossing between them is synchronized |
+| `clock-relations-not-checked` | information | Generated clocks whose master only the design can find (no `-master_clock`, no clock on the `-source`), with the first one named |
+| `sdc-word-ignored` | warning | A word the reference timer warns about and ignores while applying the command: an option `set_clock_groups` does not have (`-include_generated_clocks`), a stray word, or a `-group` name that matches no clock defined before it |
+
 It names, at information level and with a count, each command or option the file uses that the
 reference timer reads but no SDC version declares (`get_clocks -filter`, `-reset_path`, `set_pvt`,
 the `unset_*` commands; the last table below lists the options). The file is read as the
