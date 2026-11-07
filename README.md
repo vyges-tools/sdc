@@ -20,7 +20,8 @@ is checked.
 ```sh
 vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--metadata vyges-metadata.json]
-                         [--define NAME=VALUE ...] [--fail-on-warning] [--json]
+                         [--define NAME=VALUE ...] [--waivers waivers.tcl]
+                         [--write-waivers new-waivers.tcl] [--fail-on-warning] [--json]
                          [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc write --sdc design.sdc [-o|--out normalised.sdc]
                          [--netlist design.v --lib cells.lib [--lib ...]]
@@ -93,6 +94,29 @@ It names, at information level and with a count, each command or option the file
 reference timer reads but no SDC version declares (`get_clocks -filter`, `-reset_path`, `set_pvt`,
 the `unset_*` commands; the last table below lists the options). The file is read as the
 reference timer reads it; another SDC reader may refuse it.
+
+**Waivers** are a Tcl file of `waive_finding` commands, one per accepted finding, meant to sit
+with the other Tcl files a flow sources:
+
+```tcl
+waive_finding -id exception-shadowed:3f2a9c1d07be -code exception-shadowed \
+    -objects {{set_multicycle_path 3 -from [get_pins r1/CK]} {set_false_path -from [get_pins r1/CK]}} \
+    -reason {the false path is intended; the multicycle is left for the next netlist} \
+    -owner {jdoe} -expires 2027-06-30
+```
+
+- `--write-waivers FILE` writes one such command for every error and warning still active, with
+  the finding above it as a comment and an empty `-reason` to fill in. It never overwrites a file.
+- `--waivers FILE` applies them. A waived finding is listed under `waived`, with its reason, and
+  counts as neither an error nor a warning.
+- The `-id` is the finding's identity: its code and what it is about. It does not depend on line
+  numbers or on the order of the file, so it survives edits elsewhere, and it changes when what
+  the finding is about changes.
+- A waiver that waives nothing is a warning of its own: `waiver-stale` (it matches no finding),
+  `waiver-no-reason`, `waiver-expired` (`-expires` is a `YYYY-MM-DD` date, in UTC, and the waiver
+  applies through that day), `waiver-duplicate` and `waiver-malformed`.
+- Another tool can `source` the file after defining `waive_finding`, or read it as data: it holds
+  no other Tcl. Only `waive_finding` is read.
 
 **Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
 periods and duplicate names, overlapping exceptions, plus one note that the design checks did not run.

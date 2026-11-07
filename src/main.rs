@@ -23,7 +23,8 @@ use serde_json::{json, Value};
 use vyges_loom::liberty::{Lib, LibOpts};
 use vyges_loom::netlist::Netlist;
 use vyges_loom::sdc::{ReadOpts, Sdc, SdcDesign};
-use vyges_loom::sdc_lint::{LintReport, Severity};
+use vyges_loom::sdc_lint::{Finding, LintReport, Severity};
+use vyges_loom::sdc_waivers::{self, Waiver};
 use vyges_loom::sdc_diff::{Change, DiffOpts, SdcDiff};
 use vyges_loom::sdc_write::WriteOpts;
 use vyges_loom::verbosity;
@@ -36,7 +37,8 @@ vyges physical sdc — SDC constraint checking and writing
 USAGE:
   vyges physical sdc check --sdc <f.sdc> [--netlist <n.v|n.json> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--metadata <vyges-metadata.json>]
-                       [--define NAME=VALUE ...] [--fail-on-warning] [--json] [-q|-v ...]
+                       [--define NAME=VALUE ...] [--waivers <w.tcl>] [--write-waivers <w.tcl>]
+                       [--fail-on-warning] [--json] [-q|-v ...]
   vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                        [--design NAME] [--partial] [--json] [-q|-v ...]
@@ -74,6 +76,11 @@ OPTIONS:
   --define NAME=VALUE   a Tcl variable set before the SDC is read (repeatable): what a flow's
                         setup script defines and its constraint files only use
   --fail-on-warning     `check`: exit 1 on a warning too, not only on an error
+  --waivers FILE        `check`: a Tcl file of `waive_finding` commands; a finding it waives is
+                        listed as waived and counts as neither error nor warning. A waiver that
+                        matches nothing, has no -reason or is past -expires is a warning itself
+  --write-waivers FILE  `check`: write a `waive_finding` template for every error and warning
+                        still active, each with an empty -reason to fill in (never overwrites)
   -o, --out FILE        `write`: the SDC to write (default stdout; with --json, the envelope's `text`)
   --design NAME         `write`: the current_design name to write
   --partial             `write`: write even when commands are dropped
@@ -131,7 +138,8 @@ fn describe() -> Value {
                 { "arg": "netlist", "flag": "--netlist" },
                 { "arg": "lib", "flag": "--lib" },
                 { "arg": "metadata", "flag": "--metadata" },
-                { "arg": "fail_on_warning", "flag": "--fail-on-warning" }
+                { "arg": "fail_on_warning", "flag": "--fail-on-warning" },
+                { "arg": "waivers", "flag": "--waivers" }
             ],
             "emits_json": true
         },
@@ -143,7 +151,8 @@ fn describe() -> Value {
                 "netlist":  { "type": "string", "description": "gate-level Verilog (or Yosys JSON) netlist the constraints apply to; without it only the checks the file alone supports run" },
                 "lib":      { "type": "string", "description": "Liberty library of the netlist's cells (required with netlist)" },
                 "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" },
-                "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" }
+                "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" },
+                "waivers":  { "type": "string", "description": "a Tcl file of waive_finding commands: the findings it waives are listed as waived and not counted" }
             }
         },
         "assertion": {
@@ -361,7 +370,7 @@ fn emit_read(sdc: &Sdc, path: &str) {
     );
 }
 
-fn render_check(r: &LintReport) -> String {
+fn render_check(r: &LintReport, waived: &[(Finding, Waiver)]) -> String {
     let mut s = String::new();
     // Clean means no errors and no warnings — not an empty report. Coverage is printed on a
     // clean run too: "constrained 100%" is the statement worth having.
@@ -377,14 +386,24 @@ fn render_check(r: &LintReport) -> String {
     for f in &r.findings {
         s.push_str(&format!("  {:7} [{}] {}\n", f.severity.tag(), f.code, f.message));
     }
+    for (f, w) in waived {
+        s.push_str(&format!("  {:7} [{}] {} (waived: {})\n", "waived", f.code, f.message, w.reason));
+    }
     s
 }
 
-fn check_json(r: &LintReport, sdc: &str) -> Value {
+fn check_json(r: &LintReport, waived: &[(Finding, Waiver)], sdc: &str) -> Value {
     let findings: Vec<Value> = r
         .findings
         .iter()
-        .map(|f| json!({ "severity": f.severity.tag(), "code": f.code, "message": f.message }))
+        .map(|f| json!({ "id": sdc_waivers::finding_id(f), "severity": f.severity.tag(), "code": f.code, "message": f.message }))
+        .collect();
+    let waived: Vec<Value> = waived
+        .iter()
+        .map(|(f, w)| {
+            json!({ "id": w.id, "severity": f.severity.tag(), "code": f.code, "message": f.message,
+                    "reason": w.reason, "owner": w.owner, "expires": w.expires })
+        })
         .collect();
     json!({
         "schema": "vyges-sdc/1.0",
@@ -398,7 +417,9 @@ fn check_json(r: &LintReport, sdc: &str) -> Value {
         // kinds of command read and written back that no checker or timer here applies (each one
         // is a finding too): `clean` is about errors, and this is what it does not cover
         "kept_not_applied": r.findings.iter().filter(|f| f.code == "sdc-kept-not-applied").count(),
-        "findings": findings
+        "findings": findings,
+        // findings a --waivers file waived: not counted in errors or warnings, listed with why
+        "waived": waived
     })
 }
 
@@ -466,9 +487,36 @@ fn cmd_check(args: &[String]) -> i32 {
     report_check(args, &r, sdc_path)
 }
 
-/// A check's events, its report (text or `--json`), and its exit status.
-fn report_check(args: &[String], r: &LintReport, sdc_path: &str) -> i32 {
+/// A check's waivers applied (`--waivers`), its waiver template written (`--write-waivers`), its
+/// events, its report (text or `--json`), and its exit status.
+fn report_check(args: &[String], all: &LintReport, sdc_path: &str) -> i32 {
     let want_json = args.iter().any(|a| a == "--json");
+    let today = sdc_waivers::utc_today();
+    let (active, waived) = match opt(args, "--waivers") {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(t) => {
+                let a = sdc_waivers::apply(all, &sdc_waivers::parse(&t), &today);
+                (a.active, a.waived)
+            }
+            Err(e) => return fail(want_json, "check", sdc_path, &format!("--waivers {p}: {e}")),
+        },
+        None => (LintReport { findings: all.findings.clone() }, Vec::new()),
+    };
+    let r = &active;
+    if let Some(p) = opt(args, "--write-waivers") {
+        // the findings still active, less those about the waiver file itself
+        let todo = LintReport { findings: r.findings.iter().filter(|f| !f.code.starts_with("waiver-")).cloned().collect() };
+        let header = format!("Waivers for {sdc_path}, written by vyges-sdc {VERSION} on {today}.");
+        let text = sdc_waivers::write_template(&todo, &header);
+        // never over another file: a waiver file holds reasons someone wrote
+        let written = std::fs::OpenOptions::new().write(true).create_new(true).open(p).and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+        if let Err(e) = written {
+            return fail(want_json, "check", sdc_path, &format!("--write-waivers {p}: {e} (it is never overwritten; name a new file)"));
+        }
+    }
+    for (f, w) in &waived {
+        event(Severity_::Info, &finding_code(f.code), format!("waived ({}): {} — {}", w.id, f.message, w.reason), sdc_path);
+    }
     // One event per finding, keyed by its stable code, so a trail can be clustered without
     // parsing the report.
     for f in &r.findings {
@@ -484,13 +532,13 @@ fn report_check(args: &[String], r: &LintReport, sdc_path: &str) -> i32 {
     event(
         sev,
         "SDC-CHECK",
-        format!("sdc check on {sdc_path}: {} error(s), {} warning(s)", r.errors(), r.warnings()),
+        format!("sdc check on {sdc_path}: {} error(s), {} warning(s), {} waived", r.errors(), r.warnings(), waived.len()),
         sdc_path,
     );
     if want_json {
-        println!("{:#}", check_json(r, sdc_path));
+        println!("{:#}", check_json(r, &waived, sdc_path));
     } else {
-        print!("{}", render_check(r));
+        print!("{}", render_check(r, &waived));
     }
     let fail_on_warning = args.iter().any(|a| a == "--fail-on-warning");
     i32::from(r.errors() > 0 || (fail_on_warning && r.warnings() > 0))

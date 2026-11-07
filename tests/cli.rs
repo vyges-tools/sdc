@@ -334,6 +334,72 @@ fn check_reports_shadowed_conflicting_and_redundant_exceptions() {
     assert!(text.contains("set_multicycle_path 2 -through"), "the earlier one is the one replaced: {text}");
 }
 
+/// Waivers round trip: `--write-waivers` writes a template for the active findings, a filled-in
+/// copy waives them all (listed as waived, counted as nothing), a removed waiver brings back
+/// exactly its finding, a waiver for nothing is stale, and the template is never overwritten.
+#[test]
+fn waivers_written_then_read_waive_every_finding_and_only_those() {
+    let dir = scratch("waivers");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/o.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name clk -period 10 [get_ports clk]\n\
+         set_false_path -from [get_pins r1/CK]\n\
+         set_multicycle_path 3 -from [get_pins r1/CK]\n\
+         set_multicycle_path 2 -through [get_pins u1/Y]\n\
+         set_multicycle_path 4 -through [get_pins u1/Y]\n",
+    )
+    .unwrap();
+    let t = format!("{dir}/template.tcl");
+    let _ = std::fs::remove_file(&t);
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--write-waivers", &t, "--json", "-qqq"]);
+    assert_eq!(rc, 0, "{err}{out}");
+    let before = json(&out);
+    assert_eq!(before["warnings"], 2, "{before}");
+    let template = std::fs::read_to_string(&t).unwrap();
+    assert_eq!(template.matches("waive_finding -id ").count(), 2, "{template}");
+    // never over a file that exists
+    let (rc, _, err) = sdc(&["check", "--sdc", &f, "--write-waivers", &t, "-qqq"]);
+    assert_eq!(rc, 2, "{err}");
+    assert_eq!(std::fs::read_to_string(&t).unwrap(), template);
+    // an empty reason waives nothing, and says so
+    let (_, out, _) = sdc(&["check", "--sdc", &f, "--waivers", &t, "--json", "-qqq"]);
+    let v = json(&out);
+    assert_eq!(v["waived"].as_array().map(Vec::len), Some(0), "{v}");
+    assert!(v["findings"].to_string().contains("waiver-no-reason"), "{v}");
+    // filled in: both waived, no warnings left
+    let filled = format!("{dir}/filled.tcl");
+    std::fs::write(&filled, template.replace("-reason {}", "-reason {reviewed: intended}")).unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--waivers", &filled, "--json", "-qqq"]);
+    assert_eq!(rc, 0, "{err}");
+    let v = json(&out);
+    assert_eq!(v["warnings"], 0, "{v}");
+    assert_eq!(v["waived"].as_array().map(Vec::len), Some(2), "{v}");
+    assert_eq!(v["waived"][0]["reason"], "reviewed: intended", "{v}");
+    // each finding's id in the plain report is the one its waiver names
+    let ids: Vec<String> = before["findings"].as_array().unwrap().iter().filter(|x| x["severity"] != "info").map(|x| x["id"].as_str().unwrap().to_string()).collect();
+    for id in &ids {
+        assert!(template.contains(&format!("-id {id} ")), "{id} in {template}");
+    }
+    // one removed: exactly its finding comes back
+    let first = template.lines().find(|l| l.starts_with("waive_finding")).unwrap();
+    let less = format!("{dir}/less.tcl");
+    std::fs::write(&less, template.replace(first, "").replace("-reason {}", "-reason {ok}")).unwrap();
+    let (_, out, _) = sdc(&["check", "--sdc", &f, "--waivers", &less, "--json", "-qqq"]);
+    let v = json(&out);
+    assert_eq!(v["warnings"], 1, "{v}");
+    assert!(first.contains(v["findings"].as_array().unwrap().iter().find(|x| x["severity"] == "warning").unwrap()["id"].as_str().unwrap()), "{v}");
+    // a waiver for a finding that is gone is stale
+    let stale = format!("{dir}/stale.tcl");
+    std::fs::write(&stale, "waive_finding -id exception-shadowed:000000000000 -code exception-shadowed -reason {fixed}\n").unwrap();
+    let (_, out, _) = sdc(&["check", "--sdc", &f, "--waivers", &stale, "--json", "-qqq"]);
+    assert!(out.contains("waiver-stale"), "{out}");
+    // an unreadable waiver file is an input error
+    let (rc, _, _) = sdc(&["check", "--sdc", &f, "--waivers", &format!("{dir}/no-such.tcl"), "-qqq"]);
+    assert_eq!(rc, 2);
+}
+
 /// `--define NAME=VALUE` sets a variable before the file is read: a period the flow supplies.
 #[test]
 fn a_define_is_set_before_the_file_is_read() {
