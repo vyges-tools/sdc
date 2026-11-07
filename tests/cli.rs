@@ -300,6 +300,40 @@ fn check_without_a_netlist_reports_what_was_not_applied() {
     assert!(v["findings"].to_string().contains("sdc-not-applied") && v["findings"].to_string().contains("set_assigned_delay"), "{v}");
 }
 
+/// Overlapping exceptions, decided by the reference's priority: a multicycle under a false path on
+/// the same points never applies (a warning, exit 0); a second, later multicycle of the same
+/// priority replaces the first; a false path inside another is redundant (information).
+#[test]
+fn check_reports_shadowed_conflicting_and_redundant_exceptions() {
+    let dir = scratch("overlap");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/o.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name clk -period 10 [get_ports clk]\n\
+         set_false_path -from [get_pins r1/CK]\n\
+         set_multicycle_path 3 -from [get_pins r1/CK]\n\
+         set_multicycle_path 2 -through [get_pins u1/Y]\n\
+         set_multicycle_path 4 -through [get_pins u1/Y]\n\
+         set_false_path -from [get_pins r1/CK] -to [get_pins r2/D]\n",
+    )
+    .unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--json", "-qqq"]);
+    assert_eq!(rc, 0, "warnings leave the exit code at 0: {err}{out}");
+    let v = json(&out);
+    let codes: Vec<(String, String)> = v["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|x| x["code"].as_str().is_some_and(|c| c.starts_with("exception-")))
+        .map(|x| (x["severity"].as_str().unwrap_or("").to_string(), x["code"].as_str().unwrap_or("").to_string()))
+        .collect();
+    let want = [("warning", "exception-conflict"), ("warning", "exception-shadowed"), ("info", "exception-redundant")];
+    assert_eq!(codes, want.map(|(s, c)| (s.to_string(), c.to_string())).to_vec(), "{v}");
+    let text = v["findings"].to_string();
+    assert!(text.contains("set_multicycle_path 2 -through"), "the earlier one is the one replaced: {text}");
+}
+
 /// `--define NAME=VALUE` sets a variable before the file is read: a period the flow supplies.
 #[test]
 fn a_define_is_set_before_the_file_is_read() {

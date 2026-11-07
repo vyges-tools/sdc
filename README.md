@@ -65,13 +65,37 @@ could not (the area and power limits `set_max_area`, `set_max_dynamic_power`,
 `set_max_leakage_power`). It is not an error, since the command was read as the reference timer
 reads it. The JSON result counts them in `kept_not_applied`.
 
+It reports **overlapping exceptions**, with the winner on the shared paths decided as the
+reference timer decides it: the type first (a false path, then a max or min delay, a multicycle, a
+path margin, a path group), then the points (`-from` pins, `-to` pins, `-through`, `-from` clocks,
+`-to` clocks), with a multicycle's `-setup` or `-hold` counting in the check it names.
+
+| code | severity | meaning |
+|---|---|---|
+| `exception-shadowed` | warning | Another exception covers every path this one names and outranks it, so it never applies |
+| `exception-conflict` | warning | Another covers the same paths at the same priority with a different value: the one read later replaces the earlier, or the tighter value wins, or the reference has no defined choice |
+| `exception-redundant` | information | Another covers every path it names and says the same, so it adds nothing |
+| `exception-overlap-not-checked` | information | Exceptions not checked for overlap: a file with `-reset_path`, or objects named in a way the check cannot classify (a bare name list), with the first one named |
+
+Two rules that are easy to get wrong:
+
+- Two multicycles, or two max delays, with the same priority and the same kinds of points: the later
+  one in the file replaces the earlier one. It does not matter which is tighter.
+- A `-setup` multicycle also moves the hold check. A `-setup` false path or a `set_max_delay` over
+  it leaves that effect, so it is not reported.
+
+An overlap is reported only when it can be shown from the file: each point of the covering
+exception names, with the same query, every object the covered one names (a pattern may match
+them). A clock that launches a pin, or a cell that owns a pin, is not resolved, so the check can
+miss an overlap but does not report a false one.
+
 It names, at information level and with a count, each command or option the file uses that the
 reference timer reads but no SDC version declares (`get_clocks -filter`, `-reset_path`, `set_pvt`,
 the `unset_*` commands; the last table below lists the options). The file is read as the
 reference timer reads it; another SDC reader may refuse it.
 
 **Without `--netlist`**, `check` runs what the file alone supports: the not-applied report, clock
-periods and duplicate names, plus one note that the design checks did not run.
+periods and duplicate names, overlapping exceptions, plus one note that the design checks did not run.
 
 **Hierarchical netlists** are flattened before checking, as the timer reads them, so a constraint
 on `u_core/u_alu/...` finds its object. `--top NAME` names the top module when the file has more
