@@ -607,3 +607,92 @@ fn set_current_design_is_read_and_warns_on_another_design() {
     assert_ne!(rc, 2, "the read stopped: {err}");
     assert!(f.contains("current-design-not-top"), "{f}");
 }
+
+const CORAL: &str = "tests/data/coralnpu/rvv_core_mini-asap7.sdc";
+
+fn changes(v: &serde_json::Value) -> Vec<serde_json::Value> {
+    v["changes"].as_array().cloned().unwrap_or_default()
+}
+
+/// A whole file against itself: equivalent, exit 0.
+#[test]
+fn diff_of_a_file_against_itself_is_equivalent() {
+    let (rc, out, err) = sdc(&["diff", "--sdc", "tests/data/clean.sdc", "--against", "tests/data/clean.sdc", "--json"]);
+    assert_eq!(rc, 0, "{err}{out}");
+    let v = json(&out);
+    assert_eq!(v["equivalent"], true, "{out}");
+    assert_eq!(changes(&v).len(), 0);
+}
+
+/// What cannot be compared is said: the real file's `if` blocks need the design to evaluate, so
+/// even against itself (no change found) it is NOT reported equivalent, and exit is 1.
+#[test]
+fn diff_never_calls_a_file_with_uncompared_commands_equivalent() {
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", CORAL, "--json"]);
+    assert_eq!(rc, 1, "{err}{out}");
+    let v = json(&out);
+    assert_eq!(changes(&v).len(), 0, "{out}");
+    assert_eq!(v["equivalent"], false);
+    assert!(!v["not_compared"]["sdc"].as_array().unwrap().is_empty(), "{out}");
+}
+
+/// One false path deleted is ONE change: a removal, and it tightens (the paths it cut are timed
+/// again). Exit 1.
+#[test]
+fn diff_names_a_removed_false_path_as_tightening() {
+    let text = std::fs::read_to_string(CORAL).unwrap();
+    let line = "set_false_path -from [get_ports -quiet io_aresetn]\n";
+    assert!(text.contains(line), "the test file still has the reset false path");
+    let b = scratch("coral-no-reset-fp.sdc");
+    std::fs::write(&b, text.replace(line, "")).unwrap();
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", &b, "--json"]);
+    assert_eq!(rc, 1, "{err}{out}");
+    let v = json(&out);
+    let c = changes(&v);
+    assert_eq!(c.len(), 1, "{out}");
+    assert_eq!(c[0]["kind"], "removed");
+    assert_eq!(c[0]["command"], "set_false_path");
+    assert_eq!(c[0]["direction"], "tightens");
+}
+
+/// A longer clock period loosens the clock itself; what the file derives from the period
+/// (uncertainty, I/O budgets) changes with it and is reported too.
+#[test]
+fn diff_of_a_longer_period_loosens_the_clock() {
+    let text = std::fs::read_to_string(CORAL).unwrap();
+    assert!(text.contains("set clk_period 5000\n"));
+    let b = scratch("coral-6000.sdc");
+    std::fs::write(&b, text.replace("set clk_period 5000\n", "set clk_period 6000\n")).unwrap();
+    let (rc, out, err) = sdc(&["diff", "--sdc", CORAL, "--against", &b, "--json"]);
+    assert_eq!(rc, 1, "{err}{out}");
+    let v = json(&out);
+    let clk: Vec<_> = changes(&v).into_iter().filter(|c| c["command"] == "create_clock").collect();
+    assert_eq!(clk.len(), 2, "io_aclk and its virtual clock: {out}");
+    assert!(clk.iter().all(|c| c["direction"] == "loosens"), "{out}");
+    assert!(changes(&v).iter().any(|c| c["command"] == "set_clock_uncertainty" && c["direction"] == "tightens"), "5% of a longer period is a larger uncertainty: {out}");
+}
+
+/// The rename map: an RTL-named file and a netlist-named file are equivalent through the map,
+/// and differ without it.
+#[test]
+fn diff_with_a_rename_map_compares_renamed_objects() {
+    let a = scratch("rtl.sdc");
+    let b = scratch("net.sdc");
+    let m = scratch("names.json");
+    std::fs::write(&a, "create_clock -name clk -period 10 [get_ports clk]\nset_false_path -from [get_pins u_cfg/mode_q_reg/Q]\n").unwrap();
+    std::fs::write(&b, "create_clock -name clk -period 10 [get_ports clk]\nset_false_path -from [get_pins u42/Q]\n").unwrap();
+    std::fs::write(&m, r#"{"u_cfg/mode_q_reg": "u42"}"#).unwrap();
+    let (rc, out, err) = sdc(&["diff", "--sdc", &a, "--against", &b, "--map", &m, "--json"]);
+    assert_eq!(rc, 0, "{err}{out}");
+    let (rc, _, _) = sdc(&["diff", "--sdc", &a, "--against", &b]);
+    assert_eq!(rc, 1);
+}
+
+#[test]
+fn diff_without_both_files_is_a_usage_error() {
+    let (rc, _, _) = sdc(&["diff", "--sdc", CORAL]);
+    assert_eq!(rc, 2);
+    let (rc, out, _) = sdc(&["diff", "--sdc", CORAL, "--against", "tests/data/no-such.sdc", "--json"]);
+    assert_eq!(rc, 2);
+    assert_eq!(json(&out)["status"], "error");
+}

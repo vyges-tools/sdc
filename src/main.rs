@@ -11,7 +11,11 @@
 //!   model does not carry makes `write` refuse (exit 1, every dropped command listed) unless
 //!   `--partial` is given, and then the file carries a `# not written:` line for each.
 //!
-//! Both are the `vyges-loom` implementations (`sdc_lint`, `Sdc::write`), the same code the
+//! - `diff` compares two SDC files as CONSTRAINTS, not text: each constraint added, removed or
+//!   changed, and whether the change loosens or tightens what is checked. A rename map lets an
+//!   RTL file be compared with a netlist file.
+//!
+//! All are the `vyges-loom` implementations (`sdc_lint`, `Sdc::write`), the same code the
 //! timing engine runs; this crate is their command line. `--describe` advertises the structured
 //! contract to `vyges mcp`; `--json` emits the result envelope.
 
@@ -20,6 +24,7 @@ use vyges_loom::liberty::{Lib, LibOpts};
 use vyges_loom::netlist::Netlist;
 use vyges_loom::sdc::{ReadOpts, Sdc, SdcDesign};
 use vyges_loom::sdc_lint::{LintReport, Severity};
+use vyges_loom::sdc_diff::{Change, DiffOpts, SdcDiff};
 use vyges_loom::sdc_write::WriteOpts;
 use vyges_loom::verbosity;
 
@@ -35,6 +40,9 @@ USAGE:
   vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                        [--design NAME] [--partial] [--json] [-q|-v ...]
+  vyges physical sdc diff --sdc <a.sdc> --against <b.sdc> [--map <names.json>]
+                       [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
+                       [--define NAME=VALUE ...] [--json] [-q|-v ...]
   vyges physical sdc --describe | --version | --help
   vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 
@@ -48,6 +56,11 @@ COMMANDS:
           dropped, listing each; --partial writes anyway, with a `# not written:` line per
           dropped command. A netlist (+ Liberty) lets object queries that need the design
           (-filter, -of_objects, -regexp) be evaluated instead of refused.
+  diff    two SDC files compared as constraints: added, removed and changed, each marked as
+          loosening, tightening, neutral (a -comment) or unknown. Order, name order in a list,
+          one command on several ports against one per port, and a value a later command
+          overrides are not differences. Objects are compared as written; --netlist reads both
+          files against the design, so the objects queries resolve to are compared instead.
 
 OPTIONS:
   --sdc FILE            the SDC to read
@@ -63,6 +76,9 @@ OPTIONS:
   -o, --out FILE        `write`: the SDC to write (default stdout; with --json, the envelope's `text`)
   --design NAME         `write`: the current_design name to write
   --partial             `write`: write even when commands are dropped
+  --against FILE        `diff`: the SDC to compare --sdc with (the newer, or the netlist one)
+  --map FILE            `diff`: JSON object {\"old name\": \"new name\", ...}, applied to the object
+                        names of the --sdc file (a name, or the instance part of a pin) before comparing
   --json                emit the JSON result envelope on stdout
   -q, --quiet           fewer events (repeatable): -q warn, -qq error, -qqq none
   -v, --verbose         more (repeatable): -v debug (adds what was read), -vv trace
@@ -83,13 +99,17 @@ EVENTS (stderr, vyges-events):
   SDC-CHECK    the `check` summary
   SDC-NOT-WRITTEN  per command `write` left out
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
+  SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
+  SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
   SDC-IPMETA   --metadata could not be read; the other checks still ran
   SDC-FLATTEN  a hierarchical netlist was flattened, and anything it found (undefined cells)
   SDC-INPUT    an input could not be read
 
 EXIT STATUS:
-  0  ok        check: no errors (and with --fail-on-warning no warnings); write: written
-  1  finding   check found an error (or a warning with --fail-on-warning); write REFUSED
+  0  ok        check: no errors (and with --fail-on-warning no warnings); write: written;
+               diff: equivalent
+  1  finding   check found an error (or a warning with --fail-on-warning); write REFUSED;
+               diff: the files differ, or a command in either could not be compared
   2  error     usage, or an input that could not be read
 ";
 
@@ -161,6 +181,35 @@ fn describe() -> Value {
                 "assertion": {
                     "id": "sdc-written-whole",
                     "field": "complete",
+                    "pass_when": { "is_true": true }
+                }
+            },
+            {
+                "name": "sdc.diff",
+                "summary": "compare two SDC files as constraints, not text: each constraint added, removed or changed, and whether it loosens or tightens what is checked",
+                "invocation": {
+                    "args_template": ["diff", "--sdc", "{sdc}", "--against", "{against}"],
+                    "optional": [
+                        { "arg": "map", "flag": "--map" },
+                        { "arg": "netlist", "flag": "--netlist" },
+                        { "arg": "lib", "flag": "--lib" }
+                    ],
+                    "emits_json": true
+                },
+                "inputs": {
+                    "type": "object",
+                    "required": ["sdc", "against"],
+                    "properties": {
+                        "sdc":     { "type": "string", "description": "the first SDC (the older, or the RTL one)" },
+                        "against": { "type": "string", "description": "the SDC to compare it with" },
+                        "map":     { "type": "string", "description": "JSON object of old name to new name, applied to the first file's objects" },
+                        "netlist": { "type": "string", "description": "netlist both files are read against, so queries are compared by what they resolve to" },
+                        "lib":     { "type": "string", "description": "Liberty, with netlist" }
+                    }
+                },
+                "assertion": {
+                    "id": "sdc-equivalent",
+                    "field": "equivalent",
                     "pass_when": { "is_true": true }
                 }
             }
@@ -546,6 +595,160 @@ fn cmd_write(args: &[String]) -> i32 {
     i32::from(refused)
 }
 
+/// The rename map: a JSON object of old name to new name. Longest old name first, so a pin's
+/// instance prefix never shadows a longer one.
+fn load_map(path: &str) -> Result<Vec<(String, String)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    let Some(obj) = v.as_object() else {
+        return Err(format!("{path}: expected a JSON object of old name to new name"));
+    };
+    let mut out = Vec::new();
+    for (k, v) in obj {
+        let Some(to) = v.as_str() else {
+            return Err(format!("{path}: {k}: the new name must be a string"));
+        };
+        out.push((k.clone(), to.to_string()));
+    }
+    out.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    Ok(out)
+}
+
+/// One change as a line: `changed  loosens  create_clock -name clk  -period 10 -> 12`.
+fn render_change(c: &Change) -> String {
+    let what = match c.kind.as_str() {
+        "changed" => c
+            .fields
+            .iter()
+            .map(|f| format!("{} {} -> {}", f.field, f.a.as_deref().unwrap_or("(none)"), f.b.as_deref().unwrap_or("(none)")))
+            .collect::<Vec<_>>()
+            .join(", "),
+        "added" => c.b.clone().unwrap_or_default(),
+        _ => c.a.clone().unwrap_or_default(),
+    };
+    format!("{:<8} {:<9} {}  {}", c.kind.as_str(), c.direction.as_str(), c.key, what)
+}
+
+fn change_json(c: &Change) -> Value {
+    json!({
+        "kind": c.kind.as_str(),
+        "direction": c.direction.as_str(),
+        "command": c.command,
+        "key": c.key,
+        "fields": c.fields.iter().map(|f| json!({ "field": f.field, "a": f.a, "b": f.b })).collect::<Vec<_>>(),
+        "a": c.a,
+        "b": c.b,
+    })
+}
+
+/// Changes counted by direction, in a fixed order.
+fn by_direction(d: &SdcDiff) -> Value {
+    let n = |name: &str| d.changes.iter().filter(|c| c.direction.as_str() == name).count();
+    json!({ "loosens": n("loosens"), "tightens": n("tightens"), "neutral": n("neutral"), "unknown": n("unknown") })
+}
+
+fn cmd_diff(args: &[String]) -> i32 {
+    let want_json = args.iter().any(|a| a == "--json");
+    let (Some(a_path), Some(b_path)) = (opt(args, "--sdc"), opt(args, "--against")) else {
+        eprintln!("vyges-sdc diff: --sdc <a.sdc> and --against <b.sdc> are required");
+        return 2;
+    };
+    let rename = match opt(args, "--map") {
+        Some(m) => match load_map(m) {
+            Ok(r) => r,
+            Err(e) => return fail(want_json, "diff", a_path, &e),
+        },
+        None => Vec::new(),
+    };
+    let lib_paths = opts(args, "--lib");
+    let design = match opt(args, "--netlist") {
+        Some(p) => {
+            let lib = match load_libs(&lib_paths) {
+                Ok(l) => l,
+                Err(e) => return fail(want_json, "diff", a_path, &e),
+            };
+            let nl = match load_netlist(p, args, &lib, a_path) {
+                Ok(n) => n,
+                Err(e) => return fail(want_json, "diff", a_path, &e),
+            };
+            Some((nl, lib))
+        }
+        None => None,
+    };
+    let mut sides = Vec::new();
+    for path in [a_path, b_path] {
+        let ro = match read_opts(args, path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("vyges-sdc diff: {e}");
+                return 2;
+            }
+        };
+        match load_sdc(path, design.as_ref().map(|(n, l)| (n, l)), &ro) {
+            Ok(s) => {
+                emit_read(&s, path);
+                sides.push(s);
+            }
+            Err(e) => return fail(want_json, "diff", path, &e),
+        }
+    }
+    let d = vyges_loom::sdc_diff::diff(&sides[0], &sides[1], &DiffOpts { rename });
+    let equivalent = d.equivalent();
+    for c in &d.changes {
+        let sev = match c.direction.as_str() {
+            "loosens" | "unknown" => Severity_::Warn,
+            _ => Severity_::Info,
+        };
+        event(sev, "SDC-DIFF-CHANGE", render_change(c), b_path);
+    }
+    for (side, list) in [(a_path, &d.not_compared[0]), (b_path, &d.not_compared[1])] {
+        for n in list {
+            event(Severity_::Warn, "SDC-NOT-WRITTEN", format!("{side}: not compared: {n}"), side);
+        }
+    }
+    if d.units_differ {
+        event(Severity_::Warn, "SDC-DIFF", "the two files declare different set_units: values are compared as written".into(), b_path);
+    }
+    let counts = by_direction(&d);
+    let msg = if equivalent {
+        format!("sdc diff {a_path} against {b_path}: equivalent")
+    } else {
+        format!(
+            "sdc diff {a_path} against {b_path}: {} change(s) ({} loosen, {} tighten, {} neutral, {} unknown), {} not compared",
+            d.changes.len(),
+            counts["loosens"],
+            counts["tightens"],
+            counts["neutral"],
+            counts["unknown"],
+            d.not_compared[0].len() + d.not_compared[1].len()
+        )
+    };
+    event(if equivalent { Severity_::Info } else { Severity_::Warn }, "SDC-DIFF", msg, b_path);
+    if want_json {
+        println!(
+            "{:#}",
+            json!({
+                "schema": "vyges-sdc/1.0",
+                "command": "diff",
+                "status": if equivalent { "ok" } else { "finding" },
+                "sdc": a_path,
+                "against": b_path,
+                "equivalent": equivalent,
+                "by_direction": counts,
+                "changes": d.changes.iter().map(change_json).collect::<Vec<_>>(),
+                "not_compared": { "sdc": d.not_compared[0], "against": d.not_compared[1] },
+                "superseded": { "sdc": d.superseded[0], "against": d.superseded[1] },
+                "units_differ": d.units_differ,
+            })
+        );
+    } else {
+        for c in &d.changes {
+            println!("{}", render_change(c));
+        }
+    }
+    i32::from(!equivalent)
+}
+
 /// Community links, the same four every shipped engine carries. Bugs and features go to the
 /// CENTRAL `vyges/community` tracker, not this repo's issues: one queue for the whole suite.
 fn link(flag: &str) -> Option<(&'static str, &'static str)> {
@@ -606,6 +809,7 @@ fn run(args: Vec<String>) -> i32 {
         }
         Some("check") => cmd_check(&args[1..]),
         Some("write") => cmd_write(&args[1..]),
+        Some("diff") => cmd_diff(&args[1..]),
         Some(other) => {
             eprintln!("vyges-sdc: unknown command '{other}' (try --help)");
             2
@@ -655,6 +859,7 @@ mod tests {
         }
         assert_eq!(d["tools"][0]["name"], "sdc.write");
         assert_eq!(d["tools"][0]["artifacts"][0]["field"], "out");
+        assert_eq!(d["tools"][1]["name"], "sdc.diff");
     }
 
     /// `maturity` is one of the registry's three levels; anything else does not validate there.

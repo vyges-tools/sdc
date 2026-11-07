@@ -20,6 +20,10 @@ vyges physical sdc write --sdc design.sdc [-o|--out normalised.sdc]
                          [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                          [--design NAME] [--partial] [--json] [-q|--quiet ...] [-v|--verbose ...]
+vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
+                        [--netlist design.v --lib cells.lib [--lib ...]]
+                        [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
+                        [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc --describe | --version | --help
 vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 ```
@@ -100,6 +104,37 @@ file as a `# not written:` line. The JSON result says `complete: false` either w
 ```jsonc
 { "command": "write", "status": "refused", "complete": false,
   "not_written": [ "not modelled: set_assigned_delay" ] }
+```
+
+### `diff`
+
+`diff` compares two SDC files as constraints, not as text. It reports each constraint that was
+added, removed or changed, and whether the change **loosens** what is checked (a longer period,
+a new false path, a larger multicycle), **tightens** it, is **neutral** (a `-comment`), or is
+**unknown** (no rule decides it, such as one I/O delay for both `-min` and `-max`).
+
+These are not differences:
+
+- the order of commands, or of names inside a list;
+- one command on several ports, against one command per port;
+- a value a later command in the same file overrides (the overridden one is listed as
+  `superseded`).
+
+Objects are compared as written. With `--netlist`, both files are read against the design, so
+queries are compared by the objects they resolve to. `--map` renames the first file's objects
+before comparing (a JSON object of old name to new name; a name, or the instance part of a pin),
+so an RTL constraint file can be compared with a netlist one.
+
+**What cannot be compared is said.** A command either file holds that the model does not carry
+is listed under `not_compared`, and the two files are then not reported as equivalent, even when
+no change was found. Exit 0 means equivalent; exit 1 means they differ or something was not
+compared.
+
+```jsonc
+{ "command": "diff", "equivalent": false,
+  "by_direction": { "loosens": 0, "tightens": 1, "neutral": 0, "unknown": 0 },
+  "changes": [ { "kind": "removed", "direction": "tightens", "command": "set_false_path",
+                 "key": "set_false_path -from get_ports -quiet {io_aresetn}" } ] }
 ```
 
 Malformed constraints are refused when the file is read rather than guessed at. For example, a
