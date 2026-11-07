@@ -310,14 +310,19 @@ fn read_opts(args: &[String], path: &str) -> Result<ReadOpts, String> {
 
 /// Read the SDC; when a netlist was given, against the design, as the reference reads it: object
 /// queries are evaluated rather than refused, and what the reference looks up in the design or its
-/// libraries (a `-reference_pin`, an operating condition, a wire load model) is checked there.
+/// libraries (a `-reference_pin`, an operating condition, a wire load model) is checked there,
+/// and a generated clock whose master only the design gives takes its waveform from it.
 fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>, ro: &ReadOpts) -> Result<Sdc, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let text = String::from_utf8_lossy(&bytes);
     match design {
         Some((nl, lib)) => {
             let d = SdcDesign::from_netlist(nl, Some(lib));
-            Sdc::parse_with_opts(&text, &d, ro).map_err(|e| format!("{path}: {e}"))
+            let mut sdc = Sdc::parse_with_opts(&text, &d, ro).map_err(|e| format!("{path}: {e}"))?;
+            // after the read, as the reference does: each generated clock's waveform from the
+            // master the design gives it (a -source with no clock defined on it)
+            vyges_loom::sdc_genclk::update_generated_clks(&mut sdc, nl, lib);
+            Ok(sdc)
         }
         None => Sdc::parse_opts(&text, ro).map_err(|e| format!("{path}: {e}")),
     }

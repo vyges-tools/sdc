@@ -105,13 +105,17 @@ miss an overlap but does not report a false one.
 It reports **clock groups that do not say what they appear to**, with the groups read as the
 reference timer reads them: a group holds exactly the clocks its `-group` names (each word a
 pattern over the clocks defined before the command), and a command with one group separates its
-clocks from every other clock.
+clocks from every other clock. With `--netlist`, a generated clock's master is found as the
+reference finds it, through the design from its `-source`, and its waveform derived from that
+master, so a divider whose `-source` is a pin with no clock on it is timed at its own period.
 
 | code | severity | meaning |
 |---|---|---|
 | `clock-generated-ungrouped` | warning | A generated clock is in no group of a command that groups its master: it is timed against the other groups, or, under a one-group command, cut from its own master |
 | `clock-related-declared-async` | warning | Two clocks of one family (one generated from the other, or both from one clock) are in different `-asynchronous` groups: their paths go untimed, which is right only if every crossing between them is synchronized |
-| `clock-relations-not-checked` | information | Generated clocks whose master only the design can find (no `-master_clock`, no clock on the `-source`), with the first one named |
+| `clock-relations-not-checked` | information | Generated clocks whose master is not known: without `--netlist`, those with no `-master_clock` and no clock on the `-source`; with it, those the search cannot decide as the reference would (two clocks one step back, a disabled arc), with the first one named |
+| `clock-generated-no-master` | warning | With `--netlist`: no clock reaches a generated clock's `-source` through the design (wires, combinational arcs, register clock-to-Q), so the reference finds no master and derives no waveform |
+| `clock-divider-not-register` | warning | With `--netlist`: a dividing generated clock is defined at a pin that combinational logic drives; a divided clock taken from logic can glitch |
 | `sdc-word-ignored` | warning | A word the reference timer warns about and ignores while applying the command: an option `set_clock_groups` does not have (`-include_generated_clocks`), a stray word, or a `-group` name that matches no clock defined before it |
 
 It names, at information level and with a count, each command or option the file uses that the

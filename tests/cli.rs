@@ -365,6 +365,49 @@ fn check_reports_clock_groups_that_do_not_say_what_they_appear_to() {
     assert!(text.contains("times `A_DIV2` against `B`"), "{text}");
 }
 
+/// With the design, a generated clock's master is found as the reference finds it (a backward
+/// search from its -source through wires, combinational arcs and register clock-to-Q), and its
+/// waveform derived from it: G1 (no clock on its -source pin) is A / 2, G4 is G1 / 2 though
+/// defined first (neither has a non-positive period), and G3, whose search reaches no clock, has
+/// no master and no waveform.
+#[test]
+fn check_with_the_design_finds_each_generated_clocks_master() {
+    let dir = scratch("genclk");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/g.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name A -period 10 [get_ports clka]\n\
+         create_generated_clock -name G4 -divide_by 2 -source [get_pins rdiv/Q] [get_pins r2/CK]\n\
+         create_generated_clock -name G1 -divide_by 2 -source [get_pins rdiv/CK] [get_pins rdiv/Q]\n\
+         create_generated_clock -name G3 -divide_by 2 -source [get_pins ux/Y] [get_pins r3/CK]\n",
+    )
+    .unwrap();
+    let (rc, out, err) = sdc(&["check", "--sdc", &f, "--netlist", "tests/data/genclk.v", "--lib", "tests/data/seq.lib", "--json", "-qqq"]);
+    assert_eq!(rc, 1, "G3 has no waveform, an error: {err}{out}");
+    let v = json(&out);
+    let found: Vec<String> = v["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|x| x["code"].as_str().is_some_and(|c| c.starts_with("clock-")))
+        .map(|x| format!("{} {}", x["code"].as_str().unwrap(), x["message"].as_str().unwrap()))
+        .collect();
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with("clock-period") && found[0].contains("`G3`"), "{found:?}");
+    assert!(found[1].starts_with("clock-generated-no-master") && found[1].contains("`G3`"), "{found:?}");
+    // G1 on rdiv/Q clocks r1, and r2 through a buffer; G3 is on r3's own clock pin, so no
+    // register is untimed (G3's own error says it has no waveform)
+    let untimed: Vec<&str> = v["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|x| x["code"] == "register-no-clock-reaches")
+        .filter_map(|x| x["message"].as_str())
+        .collect();
+    assert!(untimed.is_empty(), "{untimed:?}");
+}
+
 /// Waivers round trip: `--write-waivers` writes a template for the active findings, a filled-in
 /// copy waives them all (listed as waived, counted as nothing), a removed waiver brings back
 /// exactly its finding, a waiver for nothing is stale, and the template is never overwritten.
