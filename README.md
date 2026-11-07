@@ -14,6 +14,11 @@ of two constraint files shows every reordering and reformatting and hides what m
 `vyges-sdc diff` says which constraints changed and whether each change loosens or tightens what
 is checked.
 
+Some findings are intended. A **waiver** records that decision as an open Tcl file of
+`waive_finding` commands, one per finding, keyed by an id that survives edits elsewhere in the
+SDC. `check --waivers` applies them and reports any that went stale or expired, and `waivers
+export` writes them as another tool's waiver commands, by a template you supply.
+
 ## Usage
 
 <!-- usage:begin -->
@@ -50,6 +55,12 @@ registers:
   every run, clean ones included.
 - **Consistency:** duplicate clock names, clocks on ports the design does not have, and
   exceptions (`set_false_path`, `set_multicycle_path`) that name no object or no structural path.
+- **Overlapping exceptions:** an exception another one outranks on every path it names
+  (shadowed), two that disagree at the same priority (conflict), and one that adds nothing
+  (redundant), with the winner decided as the reference timer decides it. Needs no netlist.
+- **Clock groups:** a generated clock left out of the groups its master is in, two clocks of
+  one family declared asynchronous, and words of `set_clock_groups` the reference timer
+  ignores (an option it lacks, a `-group` name that matches no clock). Needs no netlist.
 - **Declared clock domains:** given `--metadata`, the IP's `clock_domains` from
   `vyges-metadata.json` are checked against the SDC's clocks. A three-clock IP with one
   `create_clock` passes timing and times only part of the design; this catches it.
