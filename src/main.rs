@@ -45,6 +45,7 @@ USAGE:
   vyges physical sdc diff --sdc <a.sdc> --against <b.sdc> [--map <names.json>]
                        [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
                        [--define NAME=VALUE ...] [--json] [-q|-v ...]
+  vyges physical sdc waivers export --waivers <w.tcl> --template <t.txt> [-o out.tcl] [--json]
   vyges physical sdc --describe | --version | --help
   vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 
@@ -64,6 +65,9 @@ COMMANDS:
           overrides are not differences. Objects are compared as written; --netlist reads both
           files against the design, so the objects queries resolve to are compared instead.
           A command the model does not carry is compared by its text, variables substituted.
+  waivers export  a waiver file (`waive_finding` commands) written as another tool's Tcl waiver
+          commands, by a template that maps each finding code to that tool's rule ids. A
+          waiver whose code the template does not map is listed and not written.
 
 OPTIONS:
   --sdc FILE            the SDC to read
@@ -81,10 +85,12 @@ OPTIONS:
                         matches nothing, has no -reason or is past -expires is a warning itself
   --write-waivers FILE  `check`: write a `waive_finding` template for every error and warning
                         still active, each with an empty -reason to fill in (never overwrites)
-  -o, --out FILE        `write`: the SDC to write (default stdout; with --json, the envelope's `text`)
+  -o, --out FILE        `write`: the SDC to write; `waivers export`: the waivers to write, never
+                        over a file (default stdout; with --json, the envelope's `text`)
   --design NAME         `write`: the current_design name to write
   --partial             `write`: write even when commands are dropped
   --against FILE        `diff`: the SDC to compare --sdc with (the newer, or the netlist one)
+  --template FILE       `waivers export`: the export template (command line, object form, rule map)
   --map FILE            `diff`: JSON object {\"old name\": \"new name\", ...}, applied to the object
                         names of the --sdc file (a name, or the instance part of a pin) before comparing
   --json                emit the JSON result envelope on stdout
@@ -109,15 +115,18 @@ EVENTS (stderr, vyges-events):
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
   SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
   SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
+  SDC-WAIVER-SKIPPED  per waiver `waivers export` did not write (unmapped code, no reason, malformed)
+  SDC-WAIVERS-EXPORT  the `waivers export` summary
   SDC-IPMETA   --metadata could not be read; the other checks still ran
   SDC-FLATTEN  a hierarchical netlist was flattened, and anything it found (undefined cells)
   SDC-INPUT    an input could not be read
 
 EXIT STATUS:
   0  ok        check: no errors (and with --fail-on-warning no warnings); write: written;
-               diff: equivalent
+               diff: equivalent; waivers export: every waiver written
   1  finding   check found an error (or a warning with --fail-on-warning); write REFUSED;
-               diff: the files differ, or a command in either could not be compared
+               diff: the files differ, or a command in either could not be compared;
+               waivers export: a waiver was not written
   2  error     usage, or an input that could not be read
 ";
 
@@ -859,11 +868,66 @@ fn run(args: Vec<String>) -> i32 {
         Some("check") => cmd_check(&args[1..]),
         Some("write") => cmd_write(&args[1..]),
         Some("diff") => cmd_diff(&args[1..]),
+        Some("waivers") => cmd_waivers(&args[1..]),
         Some(other) => {
             eprintln!("vyges-sdc: unknown command '{other}' (try --help)");
             2
         }
     }
+}
+
+/// `waivers export`: a waiver file written as another tool's Tcl waiver commands, by a template
+/// (`vyges_loom::sdc_waivers::ExportTemplate`). A waiver the template cannot map is listed and not
+/// written; exit 1 then, so nothing is dropped silently.
+fn cmd_waivers(args: &[String]) -> i32 {
+    let want_json = args.iter().any(|a| a == "--json");
+    if args.first().map(String::as_str) != Some("export") {
+        eprintln!("vyges-sdc waivers: the subcommand is `export` (try --help)");
+        return 2;
+    }
+    let (Some(wp), Some(tp)) = (opt(args, "--waivers"), opt(args, "--template")) else {
+        eprintln!("vyges-sdc waivers export: --waivers <w.tcl> and --template <t.txt> are required");
+        return 2;
+    };
+    let read = |p: &str| std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"));
+    let (wt, tt) = match (read(wp), read(tp)) {
+        (Ok(w), Ok(t)) => (w, t),
+        (Err(e), _) | (_, Err(e)) => return fail(want_json, "waivers export", wp, &e),
+    };
+    let t = match sdc_waivers::parse_template(&tt) {
+        Ok(t) => t,
+        Err(e) => return fail(want_json, "waivers export", wp, &format!("--template {tp}: {e}")),
+    };
+    let file = sdc_waivers::parse(&wt);
+    let header = format!("Exported from {wp} with {tp} by vyges-sdc {VERSION} on {}.", sdc_waivers::utc_today());
+    let e = sdc_waivers::export(&file, &t, &header);
+    let mut skipped: Vec<String> = file.malformed.iter().map(|m| format!("{m}: not a valid waiver")).collect();
+    skipped.extend(e.skipped.iter().cloned());
+    for k in &skipped {
+        event(Severity_::Warn, "SDC-WAIVER-SKIPPED", format!("not exported: {k}"), wp);
+    }
+    let written = file.waivers.len() - e.skipped.len();
+    let out = opt(args, "-o").or_else(|| opt(args, "--out"));
+    if let Some(o) = out {
+        // never over another file
+        let w = std::fs::OpenOptions::new().write(true).create_new(true).open(o).and_then(|mut f| std::io::Write::write_all(&mut f, e.text.as_bytes()));
+        if let Err(err) = w {
+            return fail(want_json, "waivers export", wp, &format!("-o {o}: {err} (it is never overwritten; name a new file)"));
+        }
+    }
+    let sev = if skipped.is_empty() { Severity_::Info } else { Severity_::Warn };
+    event(sev, "SDC-WAIVERS-EXPORT", format!("waivers export of {wp}: {written} written, {} not exported", skipped.len()), wp);
+    if want_json {
+        let mut v = json!({ "schema": "vyges-sdc/1.0", "command": "waivers export", "status": "ok",
+                            "waivers": wp, "template": tp, "written": written, "skipped": skipped });
+        if out.is_none() {
+            v["text"] = json!(e.text);
+        }
+        println!("{v:#}");
+    } else if out.is_none() {
+        print!("{}", e.text);
+    }
+    i32::from(!skipped.is_empty())
 }
 
 pub fn main() {

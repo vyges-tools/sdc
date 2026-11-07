@@ -31,6 +31,7 @@ vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
                         [--netlist design.v --lib cells.lib [--lib ...]]
                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                         [--json] [-q|--quiet ...] [-v|--verbose ...]
+vyges physical sdc waivers export --waivers waivers.tcl --template target.txt [-o out.tcl] [--json]
 vyges physical sdc --describe | --version | --help
 vyges physical sdc --bug-report | --feature-request | --sponsor | --star
 ```
@@ -233,6 +234,43 @@ units each file declared; when the two declare different `set_units`, `units_dif
 ```
 
 Exit 0 means equivalent; exit 1 means the files differ or something was not compared.
+
+### `waivers export`
+
+`waivers export` writes a waiver file as the Tcl waiver commands another timing, constraint or
+lint tool sources. A **template** says how: the command line written per waiver, how each object
+is written, and which of that tool's rule ids each of our finding codes stands for.
+
+```text
+# one line per waiver; a part in [[...]] is written only when its values are present
+command  my_waive -status {Waived} -rule {@rule@} -match {@objects@} -comment {@reason@}[[ -owner {@owner@}]]
+object   name=~"@object@"
+join     \s||\s
+rule     exception-shadowed   OVERLAP_SHADOW
+rule     exception-conflict   OVERLAP_CONFLICT OVERLAP_VALUE
+```
+
+- Placeholders in `command`: `@rule@`, `@objects@`, `@reason@`, `@owner@`, `@expires@`, `@id@`,
+  `@code@`. In `object`: `@object@`, or `@object_re@` with regular-expression metacharacters
+  escaped (for a target that matches by regexp). `join` goes between objects (`\s`, `\t`, `\n` for a blank,
+  a tab, a newline).
+- `rule * …` maps every code not mapped otherwise, and `@code@` in it is our own code.
+- A waiver whose code has **no mapping is not written**. It is listed, and the exit code is 1:
+  a guessed rule id would be a waiver the other tool silently ignores. A waiver with no reason,
+  or a command that is not a valid waiver, is listed the same way.
+- An unknown directive or placeholder in the template is an error, so a typo cannot reach the
+  other tool's file. A value whose braces do not balance is escaped, so every command still
+  parses as Tcl.
+- `-o` never overwrites a file. Without it the result goes to stdout (with `--json`, the
+  envelope's `text`).
+
+This template writes our own format back, which is how the export is tested:
+
+```text
+command waive_finding -id @id@ -code @code@ -objects {@objects@} -reason {@reason@}[[ -owner {@owner@}]][[ -expires @expires@]]
+object  {@object@}
+rule    * @code@
+```
 
 ## Constraints
 
@@ -681,7 +719,7 @@ would not resolve. For `set_hierarchy_separator .` the message is:
 | Exit | Meaning |
 | --- | --- |
 | 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written; `diff`: equivalent |
-| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), `write` refused, or `diff` found a change or a command it could not compare |
+| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), `write` refused, `diff` found a change or a command it could not compare, or `waivers export` left a waiver out |
 | 2 | usage, or an input that could not be read |
 
 Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a terminal

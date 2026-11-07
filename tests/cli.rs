@@ -400,6 +400,44 @@ fn waivers_written_then_read_waive_every_finding_and_only_those() {
     assert_eq!(rc, 2);
 }
 
+/// `waivers export`: with a template for our own format the result reads back as the same
+/// waivers; with another form, an unmapped code is left out, listed, and exit is 1; the output
+/// file is never overwritten; a template typo is an input error.
+#[test]
+fn waivers_export_writes_by_template_and_never_guesses_a_rule() {
+    let dir = scratch("export");
+    std::fs::create_dir_all(&dir).unwrap();
+    let w = format!("{dir}/w.tcl");
+    std::fs::write(
+        &w,
+        "waive_finding -id exception-shadowed:aaaaaaaaaaaa -code exception-shadowed -objects {{a/b}} -reason {intended}\n\
+         waive_finding -id clock-period:cccccccccccc -code clock-period -objects {} -reason {r}\n",
+    )
+    .unwrap();
+    let own = format!("{dir}/own.txt");
+    std::fs::write(&own, "command waive_finding -id @id@ -code @code@ -objects {@objects@} -reason {@reason@}\nobject {@object@}\nrule * @code@\n").unwrap();
+    let (rc, out, err) = sdc(&["waivers", "export", "--waivers", &w, "--template", &own, "-qqq"]);
+    assert_eq!(rc, 0, "{err}");
+    assert_eq!(out.matches("waive_finding -id ").count(), 2, "{out}");
+    assert!(out.contains("-id exception-shadowed:aaaaaaaaaaaa -code exception-shadowed -objects {{a/b}} -reason {intended}"), "{out}");
+    let other = format!("{dir}/other.txt");
+    std::fs::write(&other, "command my_waive -rule {@rule@} -comment {@reason@}\nrule exception-shadowed OVERLAP_SHADOW\n").unwrap();
+    let o = format!("{dir}/out.tcl");
+    let _ = std::fs::remove_file(&o);
+    let (rc, out, _) = sdc(&["waivers", "export", "--waivers", &w, "--template", &other, "-o", &o, "--json", "-qqq"]);
+    assert_eq!(rc, 1, "an unmapped code is left out: {out}");
+    let v = json(&out);
+    assert_eq!(v["written"], 1, "{v}");
+    assert!(v["skipped"].to_string().contains("clock-period"), "{v}");
+    assert!(std::fs::read_to_string(&o).unwrap().contains("my_waive -rule {OVERLAP_SHADOW} -comment {intended}"));
+    let (rc, _, _) = sdc(&["waivers", "export", "--waivers", &w, "--template", &other, "-o", &o, "-qqq"]);
+    assert_eq!(rc, 2, "never over a file");
+    let typo = format!("{dir}/typo.txt");
+    std::fs::write(&typo, "command my_waive -rule {@rul@}\nrule * X\n").unwrap();
+    let (rc, _, _) = sdc(&["waivers", "export", "--waivers", &w, "--template", &typo, "-qqq"]);
+    assert_eq!(rc, 2);
+}
+
 /// `--define NAME=VALUE` sets a variable before the file is read: a period the flow supplies.
 #[test]
 fn a_define_is_set_before_the_file_is_read() {
