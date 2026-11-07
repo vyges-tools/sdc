@@ -88,6 +88,7 @@ path margin, a path group), then the points (`-from` pins, `-to` pins, `-through
 | `exception-shadowed` | warning | Another exception covers every path this one names and outranks it, so it never applies |
 | `exception-conflict` | warning | Another covers the same paths at the same priority with a different value: the one read later replaces the earlier, or the tighter value wins, or the reference has no defined choice |
 | `exception-redundant` | information | Another covers every path it names and says the same, so it adds nothing |
+| `exception-matches-nothing` | warning | With `--netlist`, or for an empty `{}`: a `-from`, `-through` or `-to` whose objects resolve to nothing (a `-quiet` query or a `-filter` that matches no object). The reference timer warns and makes no exception from the whole command, so the constraint does nothing; it is not read as applying to every path |
 | `exception-overlap-not-checked` | information | Exceptions not checked for overlap: a file with `-reset_path`, or objects named in a way the check cannot classify (a bare name list), with the first one named |
 
 Two rules that are easy to get wrong:

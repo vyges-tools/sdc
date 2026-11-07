@@ -408,6 +408,32 @@ fn check_with_the_design_finds_each_generated_clocks_master() {
     assert!(untimed.is_empty(), "{untimed:?}");
 }
 
+/// An exception whose `-from` query matches nothing on the design makes no exception (the
+/// reference drops the whole command): reported, and not read as cutting every path into r.
+#[test]
+fn check_reports_an_exception_whose_query_matches_nothing() {
+    let dir = scratch("emptyexc");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/e.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name clk -period 10 [get_ports clk]\n\
+         set_false_path -from [get_ports -quiet -filter {direction == inout} *] -to [get_cells r]\n",
+    )
+    .unwrap();
+    let (_, out, err) = sdc(&["check", "--sdc", &f, "--netlist", "tests/data/t.v", "--lib", "tests/data/seq.lib", "--json", "-qqq"]);
+    let v = json(&out);
+    let m: Vec<&str> = v["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|x| x["code"] == "exception-matches-nothing")
+        .filter_map(|x| x["message"].as_str())
+        .collect();
+    assert_eq!(m.len(), 1, "{err}{v}");
+    assert!(m[0].contains("STA-0471"), "{m:?}");
+}
+
 /// Waivers round trip: `--write-waivers` writes a template for the active findings, a filled-in
 /// copy waives them all (listed as waived, counted as nothing), a removed waiver brings back
 /// exactly its finding, a waiver for nothing is stale, and the template is never overwritten.
