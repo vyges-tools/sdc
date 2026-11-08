@@ -229,7 +229,8 @@ options, `-comment`) is compared field by field. These are not differences:
 queries are compared by the objects they resolve to. `--map` renames the first file's objects
 before comparing: a JSON object of old name to new name, matched against a whole name or the
 instance part of a pin, longest first. That is how an RTL constraint file is compared with a
-netlist one.
+netlist one. `vyges physical lec map --write-map names.json` writes such a map, each register pair
+proved to hold the same value rather than matched by name.
 
 ```sh
 vyges physical sdc diff --sdc rtl.sdc --against netlist.sdc --map names.json
