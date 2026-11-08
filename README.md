@@ -26,16 +26,17 @@ export` writes them as another tool's waiver commands, by a template you supply.
 vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--metadata vyges-metadata.json]
                          [--define NAME=VALUE ...] [--waivers waivers.tcl]
-                         [--write-waivers new-waivers.tcl] [--fail-on-warning] [--rtl] [--json]
-                         [-q|--quiet ...] [-v|--verbose ...]
+                         [--write-waivers new-waivers.tcl] [--fail-on-warning]
+                         [--rtl [--ranges ranges.json]] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc write --sdc design.sdc [-o|--out normalised.sdc]
                          [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                         [--design NAME] [--partial] [--rtl] [--json] [-q|--quiet ...] [-v|--verbose ...]
+                         [--design NAME] [--partial] [--rtl [--ranges ranges.json]] [--json]
+                         [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
                         [--netlist design.v --lib cells.lib [--lib ...]]
                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                        [--rtl] [--json] [-q|--quiet ...] [-v|--verbose ...]
+                        [--rtl [--ranges ranges.json]] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc map --sdc rtl.sdc --netlist elab.v --lib cells.lib [--lib ...]
                        --map names.json [--ranges ranges.json] [--revised impl.v]
                        [--top NAME] [--keep MODULE ...]
@@ -186,8 +187,17 @@ warning saying why: `name-taken` (the name would not be unique) or `no-stored-va
 stored-value output is not connected). `map` reads the elaborated names itself and does not take
 `--rtl`.
 
+Under `--rtl` the file's names are read the way `map` reads them, by the same code. An RTL form
+of a register name is matched by its alias (`cnt_reg[0]` is `cnt[0]`, `u_core/r` is `u_core.r`).
+With `--ranges`, a declared bit index is read as the elaborated one (`cnt[9]` of `[9:8]` is
+`cnt[1]`), registers and ports alike. Each name read this way is reported with the same events
+`map` uses (`SDC-MAP-BIT`, `SDC-MAP-ALIAS`). An alias that two registers could both mean, or an
+index outside its declared range, is reported (`SDC-MAP-UNKNOWN`) and read as written: it is never
+moved to a register or bit that exists. A clock name and a `-regexp` pattern are not RTL names and
+are read as written. `--ranges` without `--rtl` is refused.
+
 ```sh
-vyges physical sdc check --sdc rtl.sdc --netlist elab.v --lib cells.lib --rtl
+vyges physical sdc check --sdc rtl.sdc --netlist elab.v --lib cells.lib --rtl --ranges ranges.json
 ```
 
 ### `write`
@@ -839,7 +849,7 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
 - one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
 - with `--rtl`, one `SDC-RTL-VIEW` summary (registers named by their RTL name, and kept) and one
   per register that kept its instance name, with why;
-- one `SDC-MAP-BIT` per RTL bit index `map` translated by its declared range, one
+- one `SDC-MAP-BIT` per RTL bit index `map` (or `--rtl`) translated by its declared range, one
   `SDC-MAP-ALIAS` per RTL name it matched by an alias, with the rules used, one
   `SDC-MAP-UNKNOWN` per pattern it found naming nothing (or indexing outside its declared range,
   or an ambiguous alias, with its candidates),

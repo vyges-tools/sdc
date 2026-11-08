@@ -29,6 +29,7 @@ use vyges_loom::liberty::{Lib, LibOpts};
 use vyges_loom::netlist::Netlist;
 use vyges_loom::sdc::{ReadOpts, Sdc, SdcDesign};
 use vyges_loom::sdc_lint::{Finding, LintReport, Severity};
+use vyges_loom::sdc_rtl_map::RtlNaming;
 use vyges_loom::sdc_waivers::{self, Waiver};
 use vyges_loom::sdc_diff::{Change, DiffOpts, SdcDiff};
 use vyges_loom::sdc_write::WriteOpts;
@@ -42,14 +43,15 @@ vyges physical sdc — SDC constraint checking and writing
 USAGE:
   vyges physical sdc check --sdc <f.sdc> [--netlist <n.v|n.json> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--metadata <vyges-metadata.json>]
-                       [--define NAME=VALUE ...] [--waivers <w.tcl>] [--write-waivers <w.tcl>] [--rtl]
+                       [--define NAME=VALUE ...] [--waivers <w.tcl>] [--write-waivers <w.tcl>]
+                       [--rtl [--ranges <ranges.json>]]
                        [--fail-on-warning] [--json] [-q|-v ...]
   vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                       [--design NAME] [--partial] [--rtl] [--json] [-q|-v ...]
+                       [--design NAME] [--partial] [--rtl [--ranges <ranges.json>]] [--json] [-q|-v ...]
   vyges physical sdc diff --sdc <a.sdc> --against <b.sdc> [--map <names.json>]
                        [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
-                       [--define NAME=VALUE ...] [--rtl] [--json] [-q|-v ...]
+                       [--define NAME=VALUE ...] [--rtl [--ranges <ranges.json>]] [--json] [-q|-v ...]
   vyges physical sdc map --sdc <rtl.sdc> --netlist <elab.v> --lib <l.lib> [--lib ...]
                        --map <names.json> [--ranges <ranges.json>] [--revised <impl.v>]
                        [--top NAME] [--keep MODULE ...]
@@ -98,7 +100,12 @@ OPTIONS:
                         syn synthesize`); each register is read by its RTL name, the name on its
                         stored-value output net (`u12` becomes `cnt[0]`), so the constraint file
                         written against the RTL is checked there. A register that cannot take
-                        its name keeps the instance name, with a warning. `map` reads the
+                        its name keeps the instance name, with a warning. The file's names are
+                        read as `map` reads them: an RTL form of a register name (`cnt_reg[0]`,
+                        `a/b`) by its alias, a declared bit index by --ranges, each reported
+                        (SDC-MAP-BIT, SDC-MAP-ALIAS); an ambiguous alias or an index outside its
+                        range is reported (SDC-MAP-UNKNOWN) and read as written, never guessed.
+                        A clock name and a -regexp pattern are read as written. `map` reads the
                         elaborated names itself and does not take it
   --lib FILE            Liberty (repeatable; merged in order)
   --metadata FILE       vyges-metadata.json whose clock_domains `check` tests the SDC against
@@ -119,7 +126,7 @@ OPTIONS:
   --map FILE            `diff`: JSON object {\"old name\": \"new name\", ...}, applied to the object
                         names of the --sdc file (a name, or the instance part of a pin) before comparing
   --revised FILE        `map`: the implementation netlist the objects are carried to
-  --ranges FILE         `map`: each vector's declared range (`vyges physical syn sv-ranges`);
+  --ranges FILE         `map`, and `check`/`write`/`diff` with --rtl: each vector's declared range (`vyges physical syn sv-ranges`);
                         elaboration numbers bits from 0, so an RTL index (`r[8]` of [11:8]) is
                         translated to the elaborated one (`r[0]`), registers and ports alike, and
                         an index outside the declared range is reported
@@ -145,11 +152,11 @@ EVENTS (stderr, vyges-events):
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
   SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
   SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
-  SDC-MAP-BIT  per RTL bit index `map` translated by its declared range (info)
-  SDC-MAP-ALIAS  per RTL name `map` matched by an alias of an elaborated register, with the rules
-               used (separator, reg-suffix, output-pin) (info)
+  SDC-MAP-BIT  per RTL bit index `map` (or --rtl) translated by its declared range (info)
+  SDC-MAP-ALIAS  per RTL name `map` (or --rtl) matched by an alias of an elaborated register,
+               with the rules used (separator, reg-suffix, output-pin) (info)
   SDC-MAP-UNKNOWN  per pattern `map` found naming nothing in the elaborated design (or an index
-               outside its declared range)
+               outside its declared range, or an ambiguous alias; with --rtl, those two only)
   SDC-MAP-UNCARRIED  per object `map` could not carry to the implementation, with why
   SDC-MAP      the `map` summary
   SDC-RTL-VIEW  with --rtl: registers named by their RTL name and kept (info), and per register
@@ -190,7 +197,8 @@ fn describe() -> Value {
                 { "arg": "metadata", "flag": "--metadata" },
                 { "arg": "fail_on_warning", "flag": "--fail-on-warning" },
                 { "arg": "waivers", "flag": "--waivers" },
-                { "arg": "rtl", "flag": "--rtl" }
+                { "arg": "rtl", "flag": "--rtl" },
+                { "arg": "ranges", "flag": "--ranges" }
             ],
             "emits_json": true
         },
@@ -204,7 +212,8 @@ fn describe() -> Value {
                 "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" },
                 "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" },
                 "waivers":  { "type": "string", "description": "a Tcl file of waive_finding commands: the findings it waives are listed as waived and not counted" },
-                "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
+                "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" },
+                "ranges":   { "type": "string", "description": "with rtl: declared vector ranges (syn sv-ranges); RTL bit indices are read as the elaborated ones" }
             }
         },
         "assertion": {
@@ -224,7 +233,8 @@ fn describe() -> Value {
                         { "arg": "lib", "flag": "--lib" },
                         { "arg": "design", "flag": "--design" },
                         { "arg": "partial", "flag": "--partial" },
-                        { "arg": "rtl", "flag": "--rtl" }
+                        { "arg": "rtl", "flag": "--rtl" },
+                        { "arg": "ranges", "flag": "--ranges" }
                     ],
                     "emits_json": true
                 },
@@ -238,7 +248,8 @@ fn describe() -> Value {
                         "lib":     { "type": "string", "description": "Liberty, with netlist, for pin directions in those queries" },
                         "design":  { "type": "string", "description": "the current_design name to write" },
                         "partial": { "type": "boolean", "description": "write even when commands are dropped (each as a `# not written:` line)" },
-                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
+                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" },
+                "ranges":   { "type": "string", "description": "with rtl: declared vector ranges (syn sv-ranges); RTL bit indices are read as the elaborated ones" }
                     }
                 },
                 "artifacts": [ { "role": "sdc", "field": "out" } ],
@@ -257,7 +268,8 @@ fn describe() -> Value {
                         { "arg": "map", "flag": "--map" },
                         { "arg": "netlist", "flag": "--netlist" },
                         { "arg": "lib", "flag": "--lib" },
-                        { "arg": "rtl", "flag": "--rtl" }
+                        { "arg": "rtl", "flag": "--rtl" },
+                        { "arg": "ranges", "flag": "--ranges" }
                     ],
                     "emits_json": true
                 },
@@ -270,7 +282,8 @@ fn describe() -> Value {
                         "map":     { "type": "string", "description": "JSON object of old name to new name, applied to the first file's objects" },
                         "netlist": { "type": "string", "description": "netlist both files are read against, so queries are compared by what they resolve to" },
                         "lib":     { "type": "string", "description": "Liberty, with netlist" },
-                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
+                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" },
+                "ranges":   { "type": "string", "description": "with rtl: declared vector ranges (syn sv-ranges); RTL bit indices are read as the elaborated ones" }
                     }
                 },
                 "assertion": {
@@ -333,10 +346,20 @@ fn opts<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
 /// constraint on `u_core/u_alu/…` names an object that exists. Flattening a flat netlist
 /// changes nothing. What flattening found (cells no library defines, kept names the file lacks)
 /// is an event.
-/// The netlist, flattened; with `--rtl` (check, write, diff), its RTL view (`rtl_view`).
-fn load_netlist(path: &str, args: &[String], lib: &Lib, sdc: &str) -> Result<Netlist, String> {
+/// The netlist, flattened; with `--rtl` (check, write, diff), its RTL view (`rtl_view`) and the
+/// RTL naming the constraint file is read with: the names and (`--ranges`) declared ranges `map`
+/// reads by, from the netlist as elaborated. `--ranges` without `--rtl` is refused.
+fn load_netlist(path: &str, args: &[String], lib: &Lib, sdc: &str) -> Result<(Netlist, Option<RtlNaming>), String> {
     let nl = load_netlist_as_written(path, args, lib, sdc)?;
-    Ok(if args.iter().any(|a| a == "--rtl") { rtl_view(nl, path, lib, sdc) } else { nl })
+    if !args.iter().any(|a| a == "--rtl") {
+        if opt(args, "--ranges").is_some() {
+            return Err("--ranges is read with --rtl (or by map)".into());
+        }
+        return Ok((nl, None));
+    }
+    let ranges = opt(args, "--ranges").map(vyges_loom::sdc_rtl_map::load_ranges).transpose()?.unwrap_or_default();
+    let naming = RtlNaming::new(&nl, lib, ranges);
+    Ok((rtl_view(nl, path, lib, sdc), Some(naming)))
 }
 
 /// The RTL view of an elaborated netlist: each register instance renamed to the RTL name on its
@@ -413,13 +436,19 @@ fn read_opts(args: &[String], path: &str) -> Result<ReadOpts, String> {
 /// queries are evaluated rather than refused, and what the reference looks up in the design or its
 /// libraries (a `-reference_pin`, an operating condition, a wire load model) is checked there,
 /// and a generated clock whose master only the design gives takes its waveform from it.
-fn load_sdc(path: &str, design: Option<(&Netlist, &Lib)>, ro: &ReadOpts) -> Result<Sdc, String> {
+/// With `--rtl`, each object pattern is read by the RTL naming, and each one it read differently
+/// from how it is written is reported as `map` reports it.
+fn load_sdc(path: &str, design: Option<(&Netlist, &Lib, Option<&RtlNaming>)>, ro: &ReadOpts) -> Result<Sdc, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let text = String::from_utf8_lossy(&bytes);
     match design {
-        Some((nl, lib)) => {
-            let d = SdcDesign::from_netlist(nl, Some(lib));
+        Some((nl, lib, rtl)) => {
+            let mut d = SdcDesign::from_netlist(nl, Some(lib));
+            d.rtl = rtl.cloned();
             let mut sdc = Sdc::parse_with_opts(&text, &d, ro).map_err(|e| format!("{path}: {e}"))?;
+            if let Some(r) = &d.rtl {
+                emit_resolved(&r.log.borrow(), path);
+            }
             // after the read, as the reference does: each generated clock's waveform from the
             // master the design gives it (a -source with no clock defined on it)
             vyges_loom::sdc_genclk::update_generated_clks(&mut sdc, nl, lib);
@@ -570,11 +599,11 @@ fn cmd_check(args: &[String]) -> i32 {
         Ok(_) => return fail(want_json, "check", sdc_path, "no cells in any --lib"),
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
-    let nl = match load_netlist(nl_path, args, &lib, sdc_path) {
+    let (nl, rtl) = match load_netlist(nl_path, args, &lib, sdc_path) {
         Ok(n) => n,
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
-    let sdc = match load_sdc(sdc_path, Some((&nl, &lib)), &ro) {
+    let sdc = match load_sdc(sdc_path, Some((&nl, &lib, rtl.as_ref())), &ro) {
         Ok(s) => s,
         Err(e) => return fail(want_json, "check", sdc_path, &e),
     };
@@ -694,15 +723,15 @@ fn cmd_write(args: &[String]) -> i32 {
                 Ok(l) => l,
                 Err(e) => return fail(want_json, "write", sdc_path, &e),
             };
-            let nl = match load_netlist(p, args, &lib, sdc_path) {
+            let (nl, rtl) = match load_netlist(p, args, &lib, sdc_path) {
                 Ok(n) => n,
                 Err(e) => return fail(want_json, "write", sdc_path, &e),
             };
-            Some((nl, lib))
+            Some((nl, lib, rtl))
         }
         None => None,
     };
-    let sdc = match load_sdc(sdc_path, design.as_ref().map(|(n, l)| (n, l)), &ro) {
+    let sdc = match load_sdc(sdc_path, design.as_ref().map(|(n, l, r)| (n, l, r.as_ref())), &ro) {
         Ok(s) => s,
         Err(e) => return fail(want_json, "write", sdc_path, &e),
     };
@@ -778,24 +807,6 @@ fn load_map(path: &str) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
-/// Declared vector ranges (`vyges physical syn sv-ranges` writes them): `{"ranges": {name:
-/// [left, right]}}`, or that object alone.
-fn load_ranges(path: &str) -> Result<vyges_loom::sdc_rtl_map::DeclaredRanges, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
-    let obj = v.get("ranges").unwrap_or(&v).as_object().ok_or_else(|| format!("{path}: expected a JSON object of name to [left, right]"))?;
-    let mut out = vyges_loom::sdc_rtl_map::DeclaredRanges::new();
-    for (k, r) in obj {
-        match r.as_array().map(|a| a.iter().map(Value::as_i64).collect::<Vec<_>>()).as_deref() {
-            Some([Some(l), Some(rt)]) => {
-                out.insert(k.clone(), (*l, *rt));
-            }
-            _ => return Err(format!("{path}: {k}: expected [left, right], integers")),
-        }
-    }
-    Ok(out)
-}
-
 /// One change as a line: `changed  loosens  create_clock -name clk  -period 10 -> 12`.
 fn render_change(c: &Change) -> String {
     let what = match c.kind.as_str() {
@@ -849,11 +860,11 @@ fn cmd_diff(args: &[String]) -> i32 {
                 Ok(l) => l,
                 Err(e) => return fail(want_json, "diff", a_path, &e),
             };
-            let nl = match load_netlist(p, args, &lib, a_path) {
+            let (nl, rtl) = match load_netlist(p, args, &lib, a_path) {
                 Ok(n) => n,
                 Err(e) => return fail(want_json, "diff", a_path, &e),
             };
-            Some((nl, lib))
+            Some((nl, lib, rtl))
         }
         None => None,
     };
@@ -866,7 +877,7 @@ fn cmd_diff(args: &[String]) -> i32 {
                 return 2;
             }
         };
-        match load_sdc(path, design.as_ref().map(|(n, l)| (n, l)), &ro) {
+        match load_sdc(path, design.as_ref().map(|(n, l, r)| (n, l, r.as_ref())), &ro) {
             Ok(s) => {
                 emit_read(&s, path);
                 sides.push(s);
@@ -931,6 +942,15 @@ fn cmd_diff(args: &[String]) -> i32 {
     i32::from(!equivalent)
 }
 
+/// How each RTL name was read, as events, shared by `map` and `--rtl` (loom
+/// `sdc_rtl_map::read_notes`, the one rendering both use): `SDC-MAP-BIT`, `SDC-MAP-ALIAS`, then
+/// `SDC-MAP-UNKNOWN` with why.
+fn emit_resolved(resolved: &[vyges_loom::sdc_rtl_map::Resolved], sdc_path: &str) {
+    for n in vyges_loom::sdc_rtl_map::read_notes(resolved) {
+        event(if n.warn { Severity_::Warn } else { Severity_::Info }, &format!("SDC-MAP-{}", n.kind), n.message, sdc_path);
+    }
+}
+
 fn cmd_map(args: &[String]) -> i32 {
     use vyges_loom::sdc_rtl_map;
     let want_json = args.iter().any(|a| a == "--json");
@@ -955,7 +975,7 @@ fn cmd_map(args: &[String]) -> i32 {
         Ok(n) => n,
         Err(e) => return fail(want_json, "map", sdc_path, &e),
     };
-    let ranges = match opt(args, "--ranges").map(load_ranges) {
+    let ranges = match opt(args, "--ranges").map(sdc_rtl_map::load_ranges) {
         Some(Ok(r)) => r,
         Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
         None => Default::default(),
@@ -979,25 +999,9 @@ fn cmd_map(args: &[String]) -> i32 {
     };
     emit_read(&sdc, sdc_path);
     let r = sdc_rtl_map::rtl_map(&sdc, &elab, &lib, &ranges, &map, revised.as_ref());
+    emit_resolved(&r.resolved, sdc_path);
     let range = |d: &(i64, i64)| format!("[{}:{}]", d.0, d.1);
-    let pat = |o: &sdc_rtl_map::ObjectRef| format!("{} {}", if o.accessor.is_empty() { "(bare)" } else { o.accessor.as_str() }, o.pattern.as_deref().unwrap_or("(all)"));
-    for x in &r.resolved {
-        if let sdc_rtl_map::BitIndex::Translated { to, declared } = &x.bits {
-            event(Severity_::Info, "SDC-MAP-BIT", format!("{} is elaborated {to} (declared {})", pat(&x.object), range(declared)), sdc_path);
-        }
-        if let sdc_rtl_map::Alias::Matched { rules } = &x.alias {
-            let names: Vec<&str> = x.members.iter().map(|m| m.name.as_str()).collect();
-            event(Severity_::Info, "SDC-MAP-ALIAS", format!("{} matched {} by alias ({})", pat(&x.object), names.join(" "), rules.join(", ")), sdc_path);
-        }
-    }
-    for u in r.unknown() {
-        let why = match (&u.bits, &u.alias) {
-            (sdc_rtl_map::BitIndex::OutOfRange { declared }, _) => format!("index outside the declared range {}", range(declared)),
-            (_, sdc_rtl_map::Alias::Ambiguous { candidates }) => format!("ambiguous alias, not guessed: matches {}", candidates.join(" ")),
-            _ => "names nothing in the elaborated design".to_string(),
-        };
-        event(Severity_::Warn, "SDC-MAP-UNKNOWN", format!("{} {why}: {}", pat(&u.object), u.object.line), sdc_path);
-    }
+    let pat = sdc_rtl_map::pattern_text;
     for (x, m) in r.uncarried() {
         event(
             Severity_::Warn,

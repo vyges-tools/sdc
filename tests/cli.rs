@@ -1149,3 +1149,30 @@ fn map_reports_an_index_outside_the_declared_range() {
     assert_eq!(json(&out)["objects"][1]["bits"]["out_of_range"], true, "{out}");
     assert!(err.contains("outside the declared range [9:8]"), "{err}");
 }
+
+/// `--rtl` reads the file's names as `map` does, by the same code: a declared bit index by
+/// `--ranges` (`r[9]/D` of [9:8] is `r[1]/D`, the port `q[8]` is `q[0]`), an RTL form of a
+/// register name by its alias (`r_reg[8]` is `r[0]`), each reported as `map` reports it; an
+/// index outside its range is reported and read as written, never moved to a bit that exists.
+/// Without `--ranges` only the aliases apply, and `--ranges` without `--rtl` is refused.
+#[test]
+fn rtl_reads_bit_indices_and_aliases_as_map_does() {
+    let base = ["--sdc", "tests/data/rtl_map/rtl_forms.sdc", "--netlist", "tests/data/rtl_map/elab_bits.v", "--lib", "tests/data/rtl_map/cells.lib"];
+    let ranges = ["--ranges", "tests/data/rtl_map/ranges.json"];
+    let (_, out, err) = sdc(&[&["write", "--rtl", "--partial"][..], &ranges, &base].concat());
+    for w in ["set_false_path -to [get_pins {r[1]/D}]", "set_false_path -to [get_cells {r[0]}]", "[get_ports {q[0]}]", "set_false_path -to [get_cells {r[10]}]"] {
+        assert!(out.contains(w), "{w}: {out}{err}");
+    }
+    assert!(err.contains("get_pins r[9]/D is elaborated r[1]/D (declared [9:8])"), "{err}");
+    assert!(err.contains("get_ports q[8] is elaborated q[0] (declared [9:8])"), "{err}");
+    assert!(err.contains("get_cells r_reg[8] matched r[0] by alias (reg-suffix)"), "{err}");
+    let unknown = err.lines().find(|l| l.contains("get_cells r[10] index outside the declared range [9:8]")).unwrap_or_else(|| panic!("{err}"));
+    assert!(json(unknown)["severity"] == "warn" && json(unknown)["code"] == "SDC-MAP-UNKNOWN", "{unknown}");
+    assert_eq!(err.matches("SDC-MAP-ALIAS").count(), 1, "each read reported once: {err}");
+    // the aliases without the ranges: `r_reg[8]` is `r[8]`, which the elaborated design lacks
+    let (_, out, err) = sdc(&[&["write", "--rtl", "--partial"][..], &base].concat());
+    assert!(out.contains("set_false_path -to [get_pins {r[9]/D}]") && out.contains("[get_cells {r_reg[8]}]"), "{out}{err}");
+    assert!(!err.contains("SDC-MAP-BIT"), "{err}");
+    let (rc, _, err) = sdc(&[&["check"][..], &ranges, &base].concat());
+    assert!(rc != 0 && err.contains("--ranges is read with --rtl"), "{rc} {err}");
+}
