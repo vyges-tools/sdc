@@ -37,7 +37,8 @@ vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                         [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc map --sdc rtl.sdc --netlist elab.v --lib cells.lib [--lib ...]
-                       --map names.json [--revised impl.v] [--top NAME] [--keep MODULE ...]
+                       --map names.json [--ranges ranges.json] [--revised impl.v]
+                       [--top NAME] [--keep MODULE ...]
                        [--define NAME=VALUE ...] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc waivers export --waivers waivers.tcl --template target.txt [-o out.tcl] [--json]
 vyges physical sdc --describe | --version | --help
@@ -292,6 +293,19 @@ carried      register     s1 -> _10_
 carried      register_pin s2/D -> _11_/D
 unknown      get_cells s9  (set_false_path -to [get_cells {s9}])
 not carried  net          nx  (combinational)
+```
+
+**Bit indices.** Elaboration numbers every vector's bits from 0 at the right bound of its
+declaration, ports included: `logic [11:8] r` becomes `r[0]`..`r[3]`, and `logic [8:11] s` makes
+`s[11]` into `s[0]`. With `--ranges` (the declared ranges, as `vyges physical syn sv-ranges`
+writes them), an RTL index is translated to the elaborated one (`r[8]` to `r[0]`, `q[8]` of a port
+declared `[11:8]` to `q[0]`, a register pin `r[9]/D` to `r[1]/D`), and each translation is listed
+(`bit`, `SDC-MAP-BIT`, `bits` in the JSON). An index outside the declared range is reported as such
+and never moved to a bit that exists.
+
+```text
+bit          get_cells r[9] is elaborated r[1] (declared [11:8])
+out of range get_cells r[12]  (declared [11:8]; set_false_path -to [get_cells {r[12]}])
 ```
 
 The reasons are `register-not-proved` (no map entry), `mapped-cell-not-in-revised`,
@@ -792,8 +806,9 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
 - one `SDC-NOT-WRITTEN` per dropped command (for `diff`, per command not compared; for `map`, per
   command whose objects were not read);
 - one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
-- one `SDC-MAP-UNKNOWN` per pattern `map` found naming nothing, and one `SDC-MAP-UNCARRIED` per
-  object it could not carry, with why;
+- one `SDC-MAP-BIT` per RTL bit index `map` translated by its declared range, one
+  `SDC-MAP-UNKNOWN` per pattern it found naming nothing (or indexing outside its declared range),
+  and one `SDC-MAP-UNCARRIED` per object it could not carry, with why;
 - a summary, `SDC-CHECK`, `SDC-WRITE`, `SDC-DIFF` or `SDC-MAP`;
 - at debug, `SDC-READ`, which says what the file held.
 

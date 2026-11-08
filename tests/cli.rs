@@ -207,7 +207,7 @@ fn help_documents_every_flag() {
     let help = sdc(&["--help"]).1;
     for f in [
         "--sdc", "--netlist", "--lib", "--metadata", "--fail-on-warning", "--out", "--design",
-        "--partial", "--map", "--revised", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
+        "--partial", "--map", "--revised", "--ranges", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
         "--feature-request", "--sponsor", "--star", "VYGES_LOG", "VYGES_LOG_FORMAT", "EXIT STATUS",
     ] {
         assert!(help.contains(f), "{f}");
@@ -1011,4 +1011,46 @@ fn map_reports_what_names_nothing_and_what_is_not_carried() {
 fn map_without_a_map_is_a_usage_error() {
     let (rc, _, _) = sdc(&["map", "--sdc", "tests/data/rtl_map/carried.sdc", "--netlist", "tests/data/rtl_map/elab.v"]);
     assert_eq!(rc, 2);
+}
+
+const RTL_BITS: [&str; 10] = [
+    "--netlist", "tests/data/rtl_map/elab_bits.v", "--lib", "tests/data/rtl_map/cells.lib",
+    "--map", "tests/data/rtl_map/names_bits.json", "--revised", "tests/data/rtl_map/impl_bits.v",
+    "--ranges", "tests/data/rtl_map/ranges.json",
+];
+
+/// With `--ranges`, an RTL bit index of a non-zero-based vector (`[9:8]`) is translated to the
+/// elaborated one, for a register's pin and a port alike, and the run says so (`bits`,
+/// `SDC-MAP-BIT`); without it, the same file names nothing.
+#[test]
+fn map_translates_rtl_bit_indices_by_the_declared_range() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/bits.sdc", "--json"];
+    a.extend(RTL_BITS);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    let bits: Vec<(String, String)> = v["objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| !o["bits"].is_null())
+        .map(|o| (o["pattern"].as_str().unwrap().to_string(), o["bits"]["translated_to"].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(bits, [("q[8]".to_string(), "q[0]".to_string()), ("r[9]/D".to_string(), "r[1]/D".to_string())]);
+    assert!(err.contains("SDC-MAP-BIT"), "{err}");
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/bits.sdc", "--json"];
+    a.extend(&RTL_BITS[..8]);
+    let (rc, out, _) = sdc(&a);
+    assert_eq!((rc, json(&out)["counts"]["unknown"].as_u64()), (1, Some(2)));
+}
+
+/// An index outside the declared range is reported as such, never moved to a bit that exists.
+#[test]
+fn map_reports_an_index_outside_the_declared_range() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/bits_out.sdc", "--json"];
+    a.extend(RTL_BITS);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 1, "{out}{err}");
+    assert_eq!(json(&out)["objects"][1]["bits"]["out_of_range"], true, "{out}");
+    assert!(err.contains("outside the declared range [9:8]"), "{err}");
 }

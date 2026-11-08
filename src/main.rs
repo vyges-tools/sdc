@@ -51,7 +51,8 @@ USAGE:
                        [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
                        [--define NAME=VALUE ...] [--json] [-q|-v ...]
   vyges physical sdc map --sdc <rtl.sdc> --netlist <elab.v> --lib <l.lib> [--lib ...]
-                       --map <names.json> [--revised <impl.v>] [--top NAME] [--keep MODULE ...]
+                       --map <names.json> [--ranges <ranges.json>] [--revised <impl.v>]
+                       [--top NAME] [--keep MODULE ...]
                        [--define NAME=VALUE ...] [--json]
   vyges physical sdc waivers export --waivers <w.tcl> --template <t.txt> [-o out.tcl] [--json]
   vyges physical sdc --describe | --version | --help
@@ -109,6 +110,10 @@ OPTIONS:
   --map FILE            `diff`: JSON object {\"old name\": \"new name\", ...}, applied to the object
                         names of the --sdc file (a name, or the instance part of a pin) before comparing
   --revised FILE        `map`: the implementation netlist the objects are carried to
+  --ranges FILE         `map`: each vector's declared range (`vyges physical syn sv-ranges`);
+                        elaboration numbers bits from 0, so an RTL index (`r[8]` of [11:8]) is
+                        translated to the elaborated one (`r[0]`), registers and ports alike, and
+                        an index outside the declared range is reported
   --json                emit the JSON result envelope on stdout
   -q, --quiet           fewer events (repeatable): -q warn, -qq error, -qqq none
   -v, --verbose         more (repeatable): -v debug (adds what was read), -vv trace
@@ -131,7 +136,9 @@ EVENTS (stderr, vyges-events):
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
   SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
   SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
-  SDC-MAP-UNKNOWN  per pattern `map` found naming nothing in the elaborated design
+  SDC-MAP-BIT  per RTL bit index `map` translated by its declared range (info)
+  SDC-MAP-UNKNOWN  per pattern `map` found naming nothing in the elaborated design (or an index
+               outside its declared range)
   SDC-MAP-UNCARRIED  per object `map` could not carry to the implementation, with why
   SDC-MAP      the `map` summary
   SDC-WAIVER-SKIPPED  per waiver `waivers export` did not write (unmapped code, no reason, malformed)
@@ -259,7 +266,8 @@ fn describe() -> Value {
                 "invocation": {
                     "args_template": ["map", "--sdc", "{sdc}", "--netlist", "{netlist}", "--lib", "{lib}", "--map", "{map}"],
                     "optional": [
-                        { "arg": "revised", "flag": "--revised" }
+                        { "arg": "revised", "flag": "--revised" },
+                        { "arg": "ranges", "flag": "--ranges" }
                     ],
                     "emits_json": true
                 },
@@ -271,7 +279,8 @@ fn describe() -> Value {
                         "netlist": { "type": "string", "description": "the elaborated netlist (registers named by the RTL name on their output net)" },
                         "lib":     { "type": "string", "description": "Liberty of the netlist's cells (registers are its ff cells)" },
                         "map":     { "type": "string", "description": "JSON register map, elaborated name to implementation name (lec map --write-map)" },
-                        "revised": { "type": "string", "description": "the implementation netlist; each carried name is checked to exist there" }
+                        "revised": { "type": "string", "description": "the implementation netlist; each carried name is checked to exist there" },
+                        "ranges":  { "type": "string", "description": "declared vector ranges (syn sv-ranges): RTL bit indices are translated to the elaborated ones" }
                     }
                 },
                 "assertion": {
@@ -725,6 +734,24 @@ fn load_map(path: &str) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
+/// Declared vector ranges (`vyges physical syn sv-ranges` writes them): `{"ranges": {name:
+/// [left, right]}}`, or that object alone.
+fn load_ranges(path: &str) -> Result<vyges_loom::sdc_rtl_map::DeclaredRanges, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    let obj = v.get("ranges").unwrap_or(&v).as_object().ok_or_else(|| format!("{path}: expected a JSON object of name to [left, right]"))?;
+    let mut out = vyges_loom::sdc_rtl_map::DeclaredRanges::new();
+    for (k, r) in obj {
+        match r.as_array().map(|a| a.iter().map(Value::as_i64).collect::<Vec<_>>()).as_deref() {
+            Some([Some(l), Some(rt)]) => {
+                out.insert(k.clone(), (*l, *rt));
+            }
+            _ => return Err(format!("{path}: {k}: expected [left, right], integers")),
+        }
+    }
+    Ok(out)
+}
+
 /// One change as a line: `changed  loosens  create_clock -name clk  -period 10 -> 12`.
 fn render_change(c: &Change) -> String {
     let what = match c.kind.as_str() {
@@ -880,6 +907,11 @@ fn cmd_map(args: &[String]) -> i32 {
         Ok(n) => n,
         Err(e) => return fail(want_json, "map", sdc_path, &e),
     };
+    let ranges = match opt(args, "--ranges").map(load_ranges) {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
+        None => Default::default(),
+    };
     let revised = match opt(args, "--revised").map(|p| load_netlist(p, args, &lib, sdc_path)) {
         Some(Ok(n)) => Some(n),
         Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
@@ -898,10 +930,20 @@ fn cmd_map(args: &[String]) -> i32 {
         Err(e) => return fail(want_json, "map", sdc_path, &e),
     };
     emit_read(&sdc, sdc_path);
-    let r = sdc_rtl_map::rtl_map(&sdc, &elab, &lib, &map, revised.as_ref());
+    let r = sdc_rtl_map::rtl_map(&sdc, &elab, &lib, &ranges, &map, revised.as_ref());
+    let range = |d: &(i64, i64)| format!("[{}:{}]", d.0, d.1);
     let pat = |o: &sdc_rtl_map::ObjectRef| format!("{} {}", if o.accessor.is_empty() { "(bare)" } else { o.accessor.as_str() }, o.pattern.as_deref().unwrap_or("(all)"));
+    for x in &r.resolved {
+        if let sdc_rtl_map::BitIndex::Translated { to, declared } = &x.bits {
+            event(Severity_::Info, "SDC-MAP-BIT", format!("{} is elaborated {to} (declared {})", pat(&x.object), range(declared)), sdc_path);
+        }
+    }
     for u in r.unknown() {
-        event(Severity_::Warn, "SDC-MAP-UNKNOWN", format!("{} names nothing in the elaborated design: {}", pat(&u.object), u.object.line), sdc_path);
+        let why = match &u.bits {
+            sdc_rtl_map::BitIndex::OutOfRange { declared } => format!("index outside the declared range {}", range(declared)),
+            _ => "names nothing in the elaborated design".to_string(),
+        };
+        event(Severity_::Warn, "SDC-MAP-UNKNOWN", format!("{} {why}: {}", pat(&u.object), u.object.line), sdc_path);
     }
     for (x, m) in r.uncarried() {
         event(
@@ -939,6 +981,11 @@ fn cmd_map(args: &[String]) -> i32 {
                     "line": x.object.line,
                     "accessor": x.object.accessor,
                     "pattern": x.object.pattern,
+                    "bits": match &x.bits {
+                        sdc_rtl_map::BitIndex::Same => Value::Null,
+                        sdc_rtl_map::BitIndex::Translated { to, declared } => json!({ "translated_to": to, "declared": [declared.0, declared.1] }),
+                        sdc_rtl_map::BitIndex::OutOfRange { declared } => json!({ "out_of_range": true, "declared": [declared.0, declared.1] }),
+                    },
                     "members": x.members.iter().map(|m| json!({
                         "name": m.name, "kind": m.kind.as_str(), "carried": m.carried, "reason": m.reason,
                     })).collect::<Vec<_>>(),
@@ -961,8 +1008,13 @@ fn cmd_map(args: &[String]) -> i32 {
         );
     } else {
         for x in &r.resolved {
-            if x.members.is_empty() {
-                println!("unknown      {}  ({})", pat(&x.object), x.object.line);
+            match &x.bits {
+                sdc_rtl_map::BitIndex::Translated { to, declared } => println!("bit          {} is elaborated {to} (declared {})", pat(&x.object), range(declared)),
+                sdc_rtl_map::BitIndex::OutOfRange { declared } => {
+                    println!("out of range {}  (declared {}; {})", pat(&x.object), range(declared), x.object.line)
+                }
+                sdc_rtl_map::BitIndex::Same if x.members.is_empty() => println!("unknown      {}  ({})", pat(&x.object), x.object.line),
+                sdc_rtl_map::BitIndex::Same => {}
             }
             for m in &x.members {
                 match &m.carried {
