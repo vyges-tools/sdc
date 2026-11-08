@@ -176,7 +176,8 @@ The exit code is 1 when there is any error. Warnings are reported and leave it a
 **Checking at RTL.** `check`, `write` and `diff` take `--rtl` when the netlist is the elaborated
 RTL (`vyges physical syn synthesize`): each register is read by its RTL name, the name on its
 stored-value output net (its instance `u12` becomes `cnt[0]`), and everything else is read as
-written. The constraint file written against the RTL is then checked against the RTL, before any
+written. When that net is itself a port (the register drives the port directly), the register takes
+the port's name; `map` names it the same way. The constraint file written against the RTL is then checked against the RTL, before any
 implementation exists, with the same checks the gate-level netlist gets; the gate-level path is
 unchanged. Without `--rtl`, a query that reads the design, such as `get_pins -of_objects [get_cells
 {cnt[0]}]` or `get_cells -filter {ref_name =~ DFF*} {u_core.*}`, finds no cell of that name, and
