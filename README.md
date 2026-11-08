@@ -416,9 +416,15 @@ patterns, `all_inputs`, `all_outputs`, `all_clocks`, `all_registers`, and Tcl li
 `name`, `full_name`, `ref_name`, `is_hierarchical`, and from the cell's Liberty `is_buffer`,
 `is_inverter`, `is_clock_gate`, `is_macro` and `is_memory` (as the reference timer reads them: a
 clock buffer is a buffer, a cell with a `memory` group is a memory, a pad or level shifter is
-neither a buffer nor an inverter; `== true`, `== 1` and a bare name are the same test). A property
-the reference timer does not have, such as `is_sequential`, is refused (that command is not
-applied). Every input or output but
+neither a buffer nor an inverter; `== true`, `== 1` and a bare name are the same test).
+**Extension:** a cell `-filter` also reads `is_sequential`, which the reference timer does not
+have: true when the cell's Liberty holds state as a register does (an `ff` or `latch` group or
+bank, a `statetable`, or a clock pin on a cell that is not a clock gate). A property the reference
+timer does not have for those objects (`is_register` on a cell, `is_clock` on a port) is its
+error: the query fails and it stops reading the file at that command, so the read stops here too
+(exit 2), as at a command it does not know. A filter applied to no object is no error. A property
+it has that is not evaluated here (timing, `liberty_cell`) is refused, and that command is not
+applied. Every input or output but
 some is read in both common spellings:
 `[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]` and
 `[remove_from_collection [all_inputs] clk]`. Options no SDC version declares, such as
