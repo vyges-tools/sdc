@@ -412,7 +412,13 @@ code does.
 **Objects.** `get_ports`, `get_pins`, `get_cells`, `get_nets` and `get_clocks` with their
 patterns, `all_inputs`, `all_outputs`, `all_clocks`, `all_registers`, and Tcl lists of these
 (`[list …]`, `[concat …]`). With a netlist, queries that select by property or connectivity
-(`-filter`, `-of_objects`, `-regexp`) are evaluated against the design. Every input or output but
+(`-filter`, `-of_objects`, `-regexp`) are evaluated against the design. A cell `-filter` reads
+`name`, `full_name`, `ref_name`, `is_hierarchical`, and from the cell's Liberty `is_buffer`,
+`is_inverter`, `is_clock_gate`, `is_macro` and `is_memory` (as the reference timer reads them: a
+clock buffer is a buffer, a cell with a `memory` group is a memory, a pad or level shifter is
+neither a buffer nor an inverter; `== true`, `== 1` and a bare name are the same test). A property
+the reference timer does not have, such as `is_sequential`, is refused (that command is not
+applied). Every input or output but
 some is read in both common spellings:
 `[lsearch -inline -all -not -exact [all_inputs] [get_ports clk]]` and
 `[remove_from_collection [all_inputs] clk]`. Options no SDC version declares, such as
