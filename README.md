@@ -419,10 +419,20 @@ clock buffer is a buffer, a cell with a `memory` group is a memory, a pad or lev
 neither a buffer nor an inverter; `== true`, `== 1` and a bare name are the same test).
 **Extension:** a cell `-filter` also reads `is_sequential`, which the reference timer does not
 have: true when the cell's Liberty holds state as a register does (an `ff` or `latch` group or
-bank, a `statetable`, or a clock pin on a cell that is not a clock gate). A property the reference
+bank, a `statetable`, or a clock pin on a cell that is not a clock gate). An integrated clock
+gate built on a `statetable` therefore counts as sequential; `is_sequential && !is_clock_gate`
+leaves it out. A property the reference
 timer does not have for those objects (`is_register` on a cell, `is_clock` on a port) is its
 error: the query fails and it stops reading the file at that command, so the read stops here too
-(exit 2), as at a command it does not know. A filter applied to no object is no error. A property
+(exit 2), as at a command it does not know. So does a filter it cannot read: a character no
+filter token starts with (`ref_name ~= X`, a quoted `"X"`), an extra `)` or an unclosed `(`, an
+operator without its operands (`a &&`, `!`), an empty filter, or two terms with no operator
+between them. The stop happens wherever Tcl runs the query: in a command's words (before the
+command checks its options), a quoted word, `puts`, a `foreach` list, a `while` test, an `if` or
+`elseif` test that is reached, the part of a test before its first `&&`, `||` or `?`, a braced
+`expr`, a taken branch, a called `proc`. A query in a branch not taken, a `proc` never called or a
+braced word is not run, so it does not stop the read. A filter applied to no object is no error,
+malformed or not. A property
 it has that is not evaluated here (timing, `liberty_cell`) is refused, and that command is not
 applied. Every input or output but
 some is read in both common spellings:
