@@ -36,6 +36,9 @@ vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
                         [--netlist design.v --lib cells.lib [--lib ...]]
                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
                         [--json] [-q|--quiet ...] [-v|--verbose ...]
+vyges physical sdc map --sdc rtl.sdc --netlist elab.v --lib cells.lib [--lib ...]
+                       --map names.json [--revised impl.v] [--top NAME] [--keep MODULE ...]
+                       [--define NAME=VALUE ...] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc waivers export --waivers waivers.tcl --template target.txt [-o out.tcl] [--json]
 vyges physical sdc --describe | --version | --help
 vyges physical sdc --bug-report | --feature-request | --sponsor | --star
@@ -263,6 +266,38 @@ units each file declared; when the two declare different `set_units`, `units_dif
 ```
 
 Exit 0 means equivalent; exit 1 means the files differ or something was not compared.
+
+### `map`
+
+`map` carries an RTL constraint file to an implementation netlist. The file is resolved against the
+ELABORATED design, where each name it uses still exists: a register is named by the RTL name on its
+stored-value output net (the elaborated cell itself is `u<n>`), a pin as `<register>/<pin>`. Each
+object is then carried:
+
+- a port, or a clock, as itself (with `--revised`, the port must exist there);
+- a register, or a register's pin, through `--map`, the register map
+  `vyges physical lec map --write-map names.json` writes, each pair proved to hold the same value;
+- a net or a combinational cell is not carried: no proved match exists for one.
+
+Nothing is carried by a name heuristic, and nothing is passed over. A pattern that names nothing in
+the elaborated design (a misspelled register), a register with no proved pair, a list that needs the
+design to evaluate, and a command whose objects could not be read are each reported, with why.
+
+```sh
+vyges physical sdc map --sdc rtl.sdc --netlist elab.v --lib cells.lib --map names.json --revised impl.v
+```
+```text
+carried      port         clk -> clk
+carried      register     s1 -> _10_
+carried      register_pin s2/D -> _11_/D
+unknown      get_cells s9  (set_false_path -to [get_cells {s9}])
+not carried  net          nx  (combinational)
+```
+
+The reasons are `register-not-proved` (no map entry), `mapped-cell-not-in-revised`,
+`port-not-in-revised` and `combinational`. `--json` lists every object with its members, each with
+`kind`, `carried` and `reason`, and `complete`. Exit 0 means every object was carried; exit 1 means
+something was not.
 
 ### `waivers export`
 
@@ -747,16 +782,19 @@ would not resolve. For `set_hierarchy_separator .` the message is:
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written; `diff`: equivalent |
-| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), `write` refused, `diff` found a change or a command it could not compare, or `waivers export` left a waiver out |
+| 0 | `check`: no errors (with `--fail-on-warning`, no warnings either); `write`: written; `diff`: equivalent; `map`: every object carried |
+| 1 | a finding: `check` found an error (or a warning with `--fail-on-warning`), `write` refused, `diff` found a change or a command it could not compare, `map` found an object it could not resolve or carry, or `waivers export` left a waiver out |
 | 2 | usage, or an input that could not be read |
 
 Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a terminal
 (`VYGES_LOG_FORMAT=json|text` forces either). Each event names the SDC file as its object:
 - one `SDC-<finding>` per check finding, such as `SDC-UNCONSTRAINED-OUTPUT`;
-- one `SDC-NOT-WRITTEN` per dropped command (for `diff`, per command not compared);
+- one `SDC-NOT-WRITTEN` per dropped command (for `diff`, per command not compared; for `map`, per
+  command whose objects were not read);
 - one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
-- a summary, `SDC-CHECK`, `SDC-WRITE` or `SDC-DIFF`;
+- one `SDC-MAP-UNKNOWN` per pattern `map` found naming nothing, and one `SDC-MAP-UNCARRIED` per
+  object it could not carry, with why;
+- a summary, `SDC-CHECK`, `SDC-WRITE`, `SDC-DIFF` or `SDC-MAP`;
 - at debug, `SDC-READ`, which says what the file held.
 
 `-q`/`-v` follow the suite's verbosity contract. They repeat: `-q` warnings, `-qq` errors,

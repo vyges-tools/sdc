@@ -207,7 +207,7 @@ fn help_documents_every_flag() {
     let help = sdc(&["--help"]).1;
     for f in [
         "--sdc", "--netlist", "--lib", "--metadata", "--fail-on-warning", "--out", "--design",
-        "--partial", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
+        "--partial", "--map", "--revised", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
         "--feature-request", "--sponsor", "--star", "VYGES_LOG", "VYGES_LOG_FORMAT", "EXIT STATUS",
     ] {
         assert!(help.contains(f), "{f}");
@@ -956,4 +956,59 @@ fn diff_without_both_files_is_a_usage_error() {
     let (rc, out, _) = sdc(&["diff", "--sdc", CORAL, "--against", "tests/data/no-such.sdc", "--json"]);
     assert_eq!(rc, 2);
     assert_eq!(json(&out)["status"], "error");
+}
+
+const RTL_MAP: [&str; 8] = [
+    "--netlist", "tests/data/rtl_map/elab.v", "--lib", "tests/data/rtl_map/cells.lib",
+    "--map", "tests/data/rtl_map/names.json", "--revised", "tests/data/rtl_map/impl.v",
+];
+
+/// `map` resolves an RTL constraint file against the elaborated netlist, where a register is
+/// named by the RTL name on its stored-value output net, and carries each object to the
+/// implementation: a port or clock as itself, a register or its pin through the proved register
+/// map. Every object carried is exit 0.
+#[test]
+fn map_carries_every_register_through_the_proved_map() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/carried.sdc", "--json"];
+    a.extend(RTL_MAP);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    assert_eq!(v["command"], "map");
+    assert_eq!(v["complete"], true);
+    let mut pairs: Vec<(String, String)> = v["objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|o| o["members"].as_array().unwrap().iter())
+        .map(|m| (m["name"].as_str().unwrap().to_string(), m["carried"].as_str().unwrap().to_string()))
+        .collect();
+    pairs.sort();
+    pairs.dedup();
+    for want in [("s1", "_10_"), ("s2", "_11_"), ("s2/D", "_11_/D"), ("clk", "clk"), ("din", "din")] {
+        assert!(pairs.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} not in {pairs:?}");
+    }
+}
+
+/// What `map` cannot carry is a finding, exit 1, each with why and as its own event: a pattern
+/// naming nothing in the elaborated design, and a net (no proved match exists for one).
+#[test]
+fn map_reports_what_names_nothing_and_what_is_not_carried() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/partly.sdc", "--json"];
+    a.extend(RTL_MAP);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 1, "{out}{err}");
+    let v = json(&out);
+    assert_eq!(v["complete"], false);
+    assert_eq!(v["counts"]["unknown"], 1);
+    assert_eq!(v["counts"]["not_carried"], 1);
+    assert!(err.contains("SDC-MAP-UNKNOWN") && err.contains("s9"), "{err}");
+    assert!(err.contains("SDC-MAP-UNCARRIED") && err.contains("combinational"), "{err}");
+}
+
+/// `map` without its inputs is a usage error, exit 2.
+#[test]
+fn map_without_a_map_is_a_usage_error() {
+    let (rc, _, _) = sdc(&["map", "--sdc", "tests/data/rtl_map/carried.sdc", "--netlist", "tests/data/rtl_map/elab.v"]);
+    assert_eq!(rc, 2);
 }

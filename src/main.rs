@@ -15,6 +15,11 @@
 //!   changed, and whether the change loosens or tightens what is checked. A rename map lets an
 //!   RTL file be compared with a netlist file.
 //!
+//! - `map` resolves an RTL constraint file's objects against the ELABORATED design (ports,
+//!   registers named by their RTL names, nets) and carries each to an implementation netlist
+//!   through a proved register map (`vyges physical lec map --write-map`); what names nothing,
+//!   and what is not carried, is reported with why.
+//!
 //! All are the `vyges-loom` implementations (`sdc_lint`, `Sdc::write`), the same code the
 //! timing engine runs; this crate is their command line. `--describe` advertises the structured
 //! contract to `vyges mcp`; `--json` emits the result envelope.
@@ -45,6 +50,9 @@ USAGE:
   vyges physical sdc diff --sdc <a.sdc> --against <b.sdc> [--map <names.json>]
                        [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
                        [--define NAME=VALUE ...] [--json] [-q|-v ...]
+  vyges physical sdc map --sdc <rtl.sdc> --netlist <elab.v> --lib <l.lib> [--lib ...]
+                       --map <names.json> [--revised <impl.v>] [--top NAME] [--keep MODULE ...]
+                       [--define NAME=VALUE ...] [--json]
   vyges physical sdc waivers export --waivers <w.tcl> --template <t.txt> [-o out.tcl] [--json]
   vyges physical sdc --describe | --version | --help
   vyges physical sdc --bug-report | --feature-request | --sponsor | --star
@@ -65,6 +73,13 @@ COMMANDS:
           overrides are not differences. Objects are compared as written; --netlist reads both
           files against the design, so the objects queries resolve to are compared instead.
           A command the model does not carry is compared by its text, variables substituted.
+  map     an RTL constraint file's objects resolved against the elaborated netlist (registers
+          by the RTL name on their stored-value output net) and carried to the implementation:
+          a port or a clock as itself, a register or its pin through --map (the register map
+          `vyges physical lec map` proves and writes). A pattern that names nothing, a register
+          with no proved pair, and a net or combinational cell (no proved match exists for one)
+          are reported, each with why, as is a command whose objects could not be read.
+          --revised checks each carried name exists there.
   waivers export  a waiver file (`waive_finding` commands) written as another tool's Tcl waiver
           commands, by a template that maps each finding code to that tool's rule ids. A
           waiver whose code the template does not map is listed and not written.
@@ -93,6 +108,7 @@ OPTIONS:
   --template FILE       `waivers export`: the export template (command line, object form, rule map)
   --map FILE            `diff`: JSON object {\"old name\": \"new name\", ...}, applied to the object
                         names of the --sdc file (a name, or the instance part of a pin) before comparing
+  --revised FILE        `map`: the implementation netlist the objects are carried to
   --json                emit the JSON result envelope on stdout
   -q, --quiet           fewer events (repeatable): -q warn, -qq error, -qqq none
   -v, --verbose         more (repeatable): -v debug (adds what was read), -vv trace
@@ -111,10 +127,13 @@ EVENTS (stderr, vyges-events):
   SDC-READ     debug  what the SDC held: clocks, I/O delays, exceptions, ignored commands
   SDC-<code>   per finding of `check` (e.g. SDC-UNCONSTRAINED-OUTPUT), at its severity
   SDC-CHECK    the `check` summary
-  SDC-NOT-WRITTEN  per command `write` left out
+  SDC-NOT-WRITTEN  per command `write` left out (for `map`, per command whose objects were not read)
   SDC-WRITE    the `write` summary: complete, PARTIAL or REFUSED
   SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
   SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
+  SDC-MAP-UNKNOWN  per pattern `map` found naming nothing in the elaborated design
+  SDC-MAP-UNCARRIED  per object `map` could not carry to the implementation, with why
+  SDC-MAP      the `map` summary
   SDC-WAIVER-SKIPPED  per waiver `waivers export` did not write (unmapped code, no reason, malformed)
   SDC-WAIVERS-EXPORT  the `waivers export` summary
   SDC-IPMETA   --metadata could not be read; the other checks still ran
@@ -123,9 +142,11 @@ EVENTS (stderr, vyges-events):
 
 EXIT STATUS:
   0  ok        check: no errors (and with --fail-on-warning no warnings); write: written;
-               diff: equivalent; waivers export: every waiver written
+               diff: equivalent; map: every object resolved and carried;
+               waivers export: every waiver written
   1  finding   check found an error (or a warning with --fail-on-warning); write REFUSED;
                diff: the files differ, or a command in either could not be compared;
+               map: an object names nothing, is not carried, or cannot be resolved;
                waivers export: a waiver was not written
   2  error     usage, or an input that could not be read
 ";
@@ -229,6 +250,33 @@ fn describe() -> Value {
                 "assertion": {
                     "id": "sdc-equivalent",
                     "field": "equivalent",
+                    "pass_when": { "is_true": true }
+                }
+            },
+            {
+                "name": "sdc.map",
+                "summary": "resolve an RTL constraint file's objects against the elaborated netlist and carry each to the implementation through a proved register map; reports what names nothing and what is not carried, with why",
+                "invocation": {
+                    "args_template": ["map", "--sdc", "{sdc}", "--netlist", "{netlist}", "--lib", "{lib}", "--map", "{map}"],
+                    "optional": [
+                        { "arg": "revised", "flag": "--revised" }
+                    ],
+                    "emits_json": true
+                },
+                "inputs": {
+                    "type": "object",
+                    "required": ["sdc", "netlist", "lib", "map"],
+                    "properties": {
+                        "sdc":     { "type": "string", "description": "the RTL constraint file, written against the elaborated names" },
+                        "netlist": { "type": "string", "description": "the elaborated netlist (registers named by the RTL name on their output net)" },
+                        "lib":     { "type": "string", "description": "Liberty of the netlist's cells (registers are its ff cells)" },
+                        "map":     { "type": "string", "description": "JSON register map, elaborated name to implementation name (lec map --write-map)" },
+                        "revised": { "type": "string", "description": "the implementation netlist; each carried name is checked to exist there" }
+                    }
+                },
+                "assertion": {
+                    "id": "sdc-objects-carried",
+                    "field": "complete",
                     "pass_when": { "is_true": true }
                 }
             }
@@ -812,6 +860,127 @@ fn cmd_diff(args: &[String]) -> i32 {
     i32::from(!equivalent)
 }
 
+fn cmd_map(args: &[String]) -> i32 {
+    use vyges_loom::sdc_rtl_map;
+    let want_json = args.iter().any(|a| a == "--json");
+    let (Some(sdc_path), Some(nl_path), Some(map_path)) = (opt(args, "--sdc"), opt(args, "--netlist"), opt(args, "--map")) else {
+        eprintln!("vyges-sdc map: --sdc <rtl.sdc>, --netlist <elab.v> (with --lib) and --map <names.json> are required");
+        return 2;
+    };
+    let lib = match load_libs(&opts(args, "--lib")) {
+        Ok(l) if !l.cells.is_empty() => l,
+        Ok(_) => return fail(want_json, "map", sdc_path, "no cells in any --lib (the registers are found by their Liberty ff groups)"),
+        Err(e) => return fail(want_json, "map", sdc_path, &e),
+    };
+    let map = match load_map(map_path) {
+        Ok(m) => m,
+        Err(e) => return fail(want_json, "map", sdc_path, &e),
+    };
+    let elab = match load_netlist(nl_path, args, &lib, sdc_path) {
+        Ok(n) => n,
+        Err(e) => return fail(want_json, "map", sdc_path, &e),
+    };
+    let revised = match opt(args, "--revised").map(|p| load_netlist(p, args, &lib, sdc_path)) {
+        Some(Ok(n)) => Some(n),
+        Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
+        None => None,
+    };
+    let ro = match read_opts(args, sdc_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("vyges-sdc map: {e}");
+            return 2;
+        }
+    };
+    // read as written: the names are the RTL's, which the implementation does not have
+    let sdc = match load_sdc(sdc_path, None, &ro) {
+        Ok(s) => s,
+        Err(e) => return fail(want_json, "map", sdc_path, &e),
+    };
+    emit_read(&sdc, sdc_path);
+    let r = sdc_rtl_map::rtl_map(&sdc, &elab, &lib, &map, revised.as_ref());
+    let pat = |o: &sdc_rtl_map::ObjectRef| format!("{} {}", if o.accessor.is_empty() { "(bare)" } else { o.accessor.as_str() }, o.pattern.as_deref().unwrap_or("(all)"));
+    for u in r.unknown() {
+        event(Severity_::Warn, "SDC-MAP-UNKNOWN", format!("{} names nothing in the elaborated design: {}", pat(&u.object), u.object.line), sdc_path);
+    }
+    for (x, m) in r.uncarried() {
+        event(
+            Severity_::Warn,
+            "SDC-MAP-UNCARRIED",
+            format!("{} {} ({}) not carried: {}", pat(&x.object), m.name, m.kind.as_str(), m.reason.unwrap_or("")),
+            sdc_path,
+        );
+    }
+    for n in &r.not_resolved {
+        event(Severity_::Warn, "SDC-MAP-UNCARRIED", format!("{} cannot be resolved without evaluating it: {}", pat(n), n.line), sdc_path);
+    }
+    for n in &r.not_written {
+        event(Severity_::Warn, "SDC-NOT-WRITTEN", format!("objects not read: {n}"), sdc_path);
+    }
+    let (unknown, uncarried) = (r.unknown().count(), r.uncarried().count());
+    let carried: usize = r.resolved.iter().map(|x| x.members.iter().filter(|m| m.carried.is_some()).count()).sum();
+    let complete = r.complete();
+    event(
+        if complete { Severity_::Info } else { Severity_::Warn },
+        "SDC-MAP",
+        format!(
+            "sdc map {sdc_path}: {carried} object(s) carried, {uncarried} not carried, {unknown} pattern(s) naming nothing, {} not resolved, {} command(s) not read",
+            r.not_resolved.len(),
+            r.not_written.len()
+        ),
+        sdc_path,
+    );
+    if want_json {
+        let objects: Vec<Value> = r
+            .resolved
+            .iter()
+            .map(|x| {
+                json!({
+                    "line": x.object.line,
+                    "accessor": x.object.accessor,
+                    "pattern": x.object.pattern,
+                    "members": x.members.iter().map(|m| json!({
+                        "name": m.name, "kind": m.kind.as_str(), "carried": m.carried, "reason": m.reason,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!(
+            "{:#}",
+            json!({
+                "schema": "vyges-sdc/1.0",
+                "command": "map",
+                "status": if complete { "ok" } else { "finding" },
+                "sdc": sdc_path,
+                "complete": complete,
+                "counts": { "carried": carried, "not_carried": uncarried, "unknown": unknown, "not_resolved": r.not_resolved.len(), "not_written": r.not_written.len() },
+                "objects": objects,
+                "not_resolved": r.not_resolved.iter().map(|n| json!({ "line": n.line, "accessor": n.accessor, "pattern": n.pattern })).collect::<Vec<_>>(),
+                "not_written": r.not_written,
+            })
+        );
+    } else {
+        for x in &r.resolved {
+            if x.members.is_empty() {
+                println!("unknown      {}  ({})", pat(&x.object), x.object.line);
+            }
+            for m in &x.members {
+                match &m.carried {
+                    Some(c) => println!("carried      {:<12} {} -> {c}", m.kind.as_str(), m.name),
+                    None => println!("not carried  {:<12} {}  ({})", m.kind.as_str(), m.name, m.reason.unwrap_or("")),
+                }
+            }
+        }
+        for n in &r.not_resolved {
+            println!("not resolved {}  ({})", pat(n), n.line);
+        }
+        for n in &r.not_written {
+            println!("not read     {n}");
+        }
+    }
+    i32::from(!complete)
+}
+
 /// Community links, the same four every shipped engine carries. Bugs and features go to the
 /// CENTRAL `vyges/community` tracker, not this repo's issues: one queue for the whole suite.
 fn link(flag: &str) -> Option<(&'static str, &'static str)> {
@@ -873,6 +1042,7 @@ fn run(args: Vec<String>) -> i32 {
         Some("check") => cmd_check(&args[1..]),
         Some("write") => cmd_write(&args[1..]),
         Some("diff") => cmd_diff(&args[1..]),
+        Some("map") => cmd_map(&args[1..]),
         Some("waivers") => cmd_waivers(&args[1..]),
         Some(other) => {
             eprintln!("vyges-sdc: unknown command '{other}' (try --help)");
@@ -978,6 +1148,7 @@ mod tests {
         assert_eq!(d["tools"][0]["name"], "sdc.write");
         assert_eq!(d["tools"][0]["artifacts"][0]["field"], "out");
         assert_eq!(d["tools"][1]["name"], "sdc.diff");
+        assert_eq!(d["tools"][2]["name"], "sdc.map");
     }
 
     /// `maturity` is one of the registry's three levels; anything else does not validate there.
