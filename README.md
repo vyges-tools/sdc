@@ -308,6 +308,20 @@ bit          get_cells r[9] is elaborated r[1] (declared [11:8])
 out of range get_cells r[12]  (declared [11:8]; set_false_path -to [get_cells {r[12]}])
 ```
 
+**RTL name forms.** A constraint file written against the RTL often names a register as a synthesis
+tool would: `u_core/state_reg[2]`, or with its output pin, `u_core/state_reg[2]/Q`. A pattern that
+names nothing as written is tried again with these forms read as aliases of the elaborated name
+`u_core.state[2]`: `/` as the hierarchy separator (`separator`), the register name with or without
+`_reg` (`reg-suffix`), and a trailing register output pin on a cell query read as the register
+(`output-pin`; `get_pins` keeps the pin, as the register's pin). Each match is listed with the rules
+it used (`alias`, `SDC-MAP-ALIAS`, `alias` in the JSON). A form that two elaborated registers could
+both mean is reported with its candidates (`ambiguous`, in `SDC-MAP-UNKNOWN`), never guessed.
+
+```text
+alias        get_cells u_core/state_reg[2]/Q matched by output-pin, separator, reg-suffix
+ambiguous    get_cells u/t[0]  (matches u.t[0] u.t_reg[0]; not guessed; set_false_path -to [get_cells {u/t[0]}])
+```
+
 The reasons are `register-not-proved` (no map entry), `mapped-cell-not-in-revised`,
 `port-not-in-revised` and `combinational`. `--json` lists every object with its members, each with
 `kind`, `carried` and `reason`, and `complete`. Exit 0 means every object was carried; exit 1 means
@@ -807,7 +821,9 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
   command whose objects were not read);
 - one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
 - one `SDC-MAP-BIT` per RTL bit index `map` translated by its declared range, one
-  `SDC-MAP-UNKNOWN` per pattern it found naming nothing (or indexing outside its declared range),
+  `SDC-MAP-ALIAS` per RTL name it matched by an alias, with the rules used, one
+  `SDC-MAP-UNKNOWN` per pattern it found naming nothing (or indexing outside its declared range,
+  or an ambiguous alias, with its candidates),
   and one `SDC-MAP-UNCARRIED` per object it could not carry, with why;
 - a summary, `SDC-CHECK`, `SDC-WRITE`, `SDC-DIFF` or `SDC-MAP`;
 - at debug, `SDC-READ`, which says what the file held.

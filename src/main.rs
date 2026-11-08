@@ -80,7 +80,10 @@ COMMANDS:
           `vyges physical lec map` proves and writes). A pattern that names nothing, a register
           with no proved pair, and a net or combinational cell (no proved match exists for one)
           are reported, each with why, as is a command whose objects could not be read.
-          --revised checks each carried name exists there.
+          --revised checks each carried name exists there. A pattern that names nothing as
+          written is tried as an RTL form of a register name: `/` for `.`, with or without
+          `_reg`, with or without a trailing output pin; the match says which, and a form two
+          registers could both mean is reported with its candidates, never guessed.
   waivers export  a waiver file (`waive_finding` commands) written as another tool's Tcl waiver
           commands, by a template that maps each finding code to that tool's rule ids. A
           waiver whose code the template does not map is listed and not written.
@@ -137,6 +140,8 @@ EVENTS (stderr, vyges-events):
   SDC-DIFF-CHANGE  per change `diff` found (info; warn when it loosens or is unknown)
   SDC-DIFF     the `diff` summary: equivalent, or the changes by direction
   SDC-MAP-BIT  per RTL bit index `map` translated by its declared range (info)
+  SDC-MAP-ALIAS  per RTL name `map` matched by an alias of an elaborated register, with the rules
+               used (separator, reg-suffix, output-pin) (info)
   SDC-MAP-UNKNOWN  per pattern `map` found naming nothing in the elaborated design (or an index
                outside its declared range)
   SDC-MAP-UNCARRIED  per object `map` could not carry to the implementation, with why
@@ -937,10 +942,15 @@ fn cmd_map(args: &[String]) -> i32 {
         if let sdc_rtl_map::BitIndex::Translated { to, declared } = &x.bits {
             event(Severity_::Info, "SDC-MAP-BIT", format!("{} is elaborated {to} (declared {})", pat(&x.object), range(declared)), sdc_path);
         }
+        if let sdc_rtl_map::Alias::Matched { rules } = &x.alias {
+            let names: Vec<&str> = x.members.iter().map(|m| m.name.as_str()).collect();
+            event(Severity_::Info, "SDC-MAP-ALIAS", format!("{} matched {} by alias ({})", pat(&x.object), names.join(" "), rules.join(", ")), sdc_path);
+        }
     }
     for u in r.unknown() {
-        let why = match &u.bits {
-            sdc_rtl_map::BitIndex::OutOfRange { declared } => format!("index outside the declared range {}", range(declared)),
+        let why = match (&u.bits, &u.alias) {
+            (sdc_rtl_map::BitIndex::OutOfRange { declared }, _) => format!("index outside the declared range {}", range(declared)),
+            (_, sdc_rtl_map::Alias::Ambiguous { candidates }) => format!("ambiguous alias, not guessed: matches {}", candidates.join(" ")),
             _ => "names nothing in the elaborated design".to_string(),
         };
         event(Severity_::Warn, "SDC-MAP-UNKNOWN", format!("{} {why}: {}", pat(&u.object), u.object.line), sdc_path);
@@ -986,6 +996,11 @@ fn cmd_map(args: &[String]) -> i32 {
                         sdc_rtl_map::BitIndex::Translated { to, declared } => json!({ "translated_to": to, "declared": [declared.0, declared.1] }),
                         sdc_rtl_map::BitIndex::OutOfRange { declared } => json!({ "out_of_range": true, "declared": [declared.0, declared.1] }),
                     },
+                    "alias": match &x.alias {
+                        sdc_rtl_map::Alias::None => Value::Null,
+                        sdc_rtl_map::Alias::Matched { rules } => json!({ "matched": rules }),
+                        sdc_rtl_map::Alias::Ambiguous { candidates } => json!({ "ambiguous": candidates }),
+                    },
                     "members": x.members.iter().map(|m| json!({
                         "name": m.name, "kind": m.kind.as_str(), "carried": m.carried, "reason": m.reason,
                     })).collect::<Vec<_>>(),
@@ -1013,8 +1028,17 @@ fn cmd_map(args: &[String]) -> i32 {
                 sdc_rtl_map::BitIndex::OutOfRange { declared } => {
                     println!("out of range {}  (declared {}; {})", pat(&x.object), range(declared), x.object.line)
                 }
-                sdc_rtl_map::BitIndex::Same if x.members.is_empty() => println!("unknown      {}  ({})", pat(&x.object), x.object.line),
+                sdc_rtl_map::BitIndex::Same if x.members.is_empty() && x.alias == sdc_rtl_map::Alias::None => {
+                    println!("unknown      {}  ({})", pat(&x.object), x.object.line)
+                }
                 sdc_rtl_map::BitIndex::Same => {}
+            }
+            match &x.alias {
+                sdc_rtl_map::Alias::Matched { rules } => println!("alias        {} matched by {}", pat(&x.object), rules.join(", ")),
+                sdc_rtl_map::Alias::Ambiguous { candidates } => {
+                    println!("ambiguous    {}  (matches {}; not guessed; {})", pat(&x.object), candidates.join(" "), x.object.line)
+                }
+                sdc_rtl_map::Alias::None => {}
             }
             for m in &x.members {
                 match &m.carried {

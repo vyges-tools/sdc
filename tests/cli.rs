@@ -1044,6 +1044,58 @@ fn map_translates_rtl_bit_indices_by_the_declared_range() {
     assert_eq!((rc, json(&out)["counts"]["unknown"].as_u64()), (1, Some(2)));
 }
 
+/// RTL forms of a register name are aliases of the elaborated name: `_reg` on the register name
+/// is read away, and so is a trailing output pin (`/Q`) on a cell query (a pin query keeps it:
+/// it names the register's pin), after the bit index is translated by the declared range; the run names the alias rules it used (`alias`, `SDC-MAP-ALIAS`).
+#[test]
+fn map_matches_rtl_register_forms_by_alias_and_says_which() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/alias.sdc", "--json"];
+    a.extend(RTL_BITS);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 0, "{out}{err}");
+    let v = json(&out);
+    let o = &v["objects"];
+    let rules = |i: usize| -> Vec<String> {
+        let mut r: Vec<String> = o[i]["alias"]["matched"].as_array().unwrap_or_else(|| panic!("{out}")).iter().map(|x| x.as_str().unwrap().to_string()).collect();
+        r.sort();
+        r
+    };
+    assert_eq!(rules(1), ["reg-suffix"]); // get_pins: still the register's pin
+    assert_eq!(rules(2), ["reg-suffix"]);
+    assert_eq!(rules(3), ["output-pin", "reg-suffix"]); // get_cells with a pin: the register
+    assert!(o[0]["alias"].is_null(), "{out}");
+    assert_eq!(o[1]["members"][0]["carried"], "_10_/Q", "{out}");
+    assert_eq!(o[2]["members"][0]["carried"], "_11_", "{out}");
+    assert_eq!(o[3]["members"][0]["carried"], "_10_", "{out}");
+    assert!(err.contains("SDC-MAP-ALIAS"), "{err}");
+    let (_, text, _) = sdc(&a.iter().filter(|x| **x != "--json").copied().collect::<Vec<_>>());
+    assert!(text.contains("alias        get_cells r_reg[9] matched by reg-suffix"), "{text}");
+}
+
+const RTL_ALIAS: [&str; 8] = [
+    "--netlist", "tests/data/rtl_map/elab_alias.v", "--lib", "tests/data/rtl_map/cells.lib",
+    "--map", "tests/data/rtl_map/names_alias.json", "--revised", "tests/data/rtl_map/impl_alias.v",
+];
+
+/// `/` is read as the hierarchy separator; an RTL form that two elaborated registers could both
+/// mean (`u/t[0]`: `u.t[0]` and `u.t_reg[0]`) is reported with its candidates, never guessed.
+#[test]
+fn map_reports_an_ambiguous_alias_with_its_candidates() {
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/alias_hier.sdc", "--json"];
+    a.extend(RTL_ALIAS);
+    let (rc, out, err) = sdc(&a);
+    assert_eq!(rc, 1, "{out}{err}");
+    let v = json(&out);
+    assert_eq!(v["counts"]["unknown"], 1, "{out}");
+    assert_eq!(v["objects"][1]["members"][0]["carried"], "_12_", "{out}");
+    assert_eq!(v["objects"][2]["alias"]["ambiguous"], serde_json::json!(["u.t[0]", "u.t_reg[0]"]), "{out}");
+    assert!(v["objects"][2]["members"].as_array().unwrap().is_empty(), "{out}");
+    assert!(err.contains("ambiguous alias, not guessed: matches u.t[0] u.t_reg[0]"), "{err}");
+    let (_, text, _) = sdc(&a.iter().filter(|x| **x != "--json").copied().collect::<Vec<_>>());
+    assert!(text.contains("ambiguous    get_cells u/t[0]"), "{text}");
+    assert!(!text.contains("unknown      get_cells u/t[0]"), "{text}");
+}
+
 /// An index outside the declared range is reported as such, never moved to a bit that exists.
 #[test]
 fn map_reports_an_index_outside_the_declared_range() {

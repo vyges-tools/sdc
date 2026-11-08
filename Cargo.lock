@@ -157,7 +157,7 @@ dependencies = [
 [[package]]
 name = "vyges-loom"
 version = "0.1.53"
-source = "git+https://github.com/vyges-tools/loom?branch=main#c35b6caaca2cfb65e9de0e48f5b670f1cbbb087c"
+source = "git+https://github.com/vyges-tools/loom?branch=main#0e4e8c2aae2c24e7189d05daf8a37eed50f04123"
 dependencies = [
  "miniz_oxide",
  "regex",
