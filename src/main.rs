@@ -42,14 +42,14 @@ vyges physical sdc — SDC constraint checking and writing
 USAGE:
   vyges physical sdc check --sdc <f.sdc> [--netlist <n.v|n.json> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--metadata <vyges-metadata.json>]
-                       [--define NAME=VALUE ...] [--waivers <w.tcl>] [--write-waivers <w.tcl>]
+                       [--define NAME=VALUE ...] [--waivers <w.tcl>] [--write-waivers <w.tcl>] [--rtl]
                        [--fail-on-warning] [--json] [-q|-v ...]
   vyges physical sdc write --sdc <f.sdc> [-o out.sdc] [--netlist <n.v> --lib <l.lib> [--lib ...]]
                        [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                       [--design NAME] [--partial] [--json] [-q|-v ...]
+                       [--design NAME] [--partial] [--rtl] [--json] [-q|-v ...]
   vyges physical sdc diff --sdc <a.sdc> --against <b.sdc> [--map <names.json>]
                        [--netlist <n.v> --lib <l.lib> [--lib ...]] [--top NAME] [--keep MODULE ...]
-                       [--define NAME=VALUE ...] [--json] [-q|-v ...]
+                       [--define NAME=VALUE ...] [--rtl] [--json] [-q|-v ...]
   vyges physical sdc map --sdc <rtl.sdc> --netlist <elab.v> --lib <l.lib> [--lib ...]
                        --map <names.json> [--ranges <ranges.json>] [--revised <impl.v>]
                        [--top NAME] [--keep MODULE ...]
@@ -94,6 +94,12 @@ OPTIONS:
                         hierarchical netlist is flattened, as the timer reads it
   --top NAME            the netlist's top module, when the file has more than one candidate
   --keep MODULE         a module kept as a block, not flattened (repeatable)
+  --rtl                 `check`, `write`, `diff`: the netlist is the elaborated RTL (`vyges physical
+                        syn synthesize`); each register is read by its RTL name, the name on its
+                        stored-value output net (`u12` becomes `cnt[0]`), so the constraint file
+                        written against the RTL is checked there. A register that cannot take
+                        its name keeps the instance name, with a warning. `map` reads the
+                        elaborated names itself and does not take it
   --lib FILE            Liberty (repeatable; merged in order)
   --metadata FILE       vyges-metadata.json whose clock_domains `check` tests the SDC against
   --define NAME=VALUE   a Tcl variable set before the SDC is read (repeatable): what a flow's
@@ -146,6 +152,8 @@ EVENTS (stderr, vyges-events):
                outside its declared range)
   SDC-MAP-UNCARRIED  per object `map` could not carry to the implementation, with why
   SDC-MAP      the `map` summary
+  SDC-RTL-VIEW  with --rtl: registers named by their RTL name and kept (info), and per register
+               that kept its instance name, with why (warn)
   SDC-WAIVER-SKIPPED  per waiver `waivers export` did not write (unmapped code, no reason, malformed)
   SDC-WAIVERS-EXPORT  the `waivers export` summary
   SDC-IPMETA   --metadata could not be read; the other checks still ran
@@ -181,7 +189,8 @@ fn describe() -> Value {
                 { "arg": "lib", "flag": "--lib" },
                 { "arg": "metadata", "flag": "--metadata" },
                 { "arg": "fail_on_warning", "flag": "--fail-on-warning" },
-                { "arg": "waivers", "flag": "--waivers" }
+                { "arg": "waivers", "flag": "--waivers" },
+                { "arg": "rtl", "flag": "--rtl" }
             ],
             "emits_json": true
         },
@@ -194,7 +203,8 @@ fn describe() -> Value {
                 "lib":      { "type": "string", "description": "Liberty library of the netlist's cells (required with netlist)" },
                 "metadata": { "type": "string", "description": "vyges-metadata.json: its clock_domains are checked against the SDC's clocks" },
                 "fail_on_warning": { "type": "boolean", "description": "treat a warning (e.g. an unconstrained output) as a failure, not only an error" },
-                "waivers":  { "type": "string", "description": "a Tcl file of waive_finding commands: the findings it waives are listed as waived and not counted" }
+                "waivers":  { "type": "string", "description": "a Tcl file of waive_finding commands: the findings it waives are listed as waived and not counted" },
+                "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
             }
         },
         "assertion": {
@@ -213,7 +223,8 @@ fn describe() -> Value {
                         { "arg": "netlist", "flag": "--netlist" },
                         { "arg": "lib", "flag": "--lib" },
                         { "arg": "design", "flag": "--design" },
-                        { "arg": "partial", "flag": "--partial" }
+                        { "arg": "partial", "flag": "--partial" },
+                        { "arg": "rtl", "flag": "--rtl" }
                     ],
                     "emits_json": true
                 },
@@ -226,7 +237,8 @@ fn describe() -> Value {
                         "netlist": { "type": "string", "description": "netlist, to evaluate object queries that need the design" },
                         "lib":     { "type": "string", "description": "Liberty, with netlist, for pin directions in those queries" },
                         "design":  { "type": "string", "description": "the current_design name to write" },
-                        "partial": { "type": "boolean", "description": "write even when commands are dropped (each as a `# not written:` line)" }
+                        "partial": { "type": "boolean", "description": "write even when commands are dropped (each as a `# not written:` line)" },
+                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
                     }
                 },
                 "artifacts": [ { "role": "sdc", "field": "out" } ],
@@ -244,7 +256,8 @@ fn describe() -> Value {
                     "optional": [
                         { "arg": "map", "flag": "--map" },
                         { "arg": "netlist", "flag": "--netlist" },
-                        { "arg": "lib", "flag": "--lib" }
+                        { "arg": "lib", "flag": "--lib" },
+                        { "arg": "rtl", "flag": "--rtl" }
                     ],
                     "emits_json": true
                 },
@@ -256,7 +269,8 @@ fn describe() -> Value {
                         "against": { "type": "string", "description": "the SDC to compare it with" },
                         "map":     { "type": "string", "description": "JSON object of old name to new name, applied to the first file's objects" },
                         "netlist": { "type": "string", "description": "netlist both files are read against, so queries are compared by what they resolve to" },
-                        "lib":     { "type": "string", "description": "Liberty, with netlist" }
+                        "lib":     { "type": "string", "description": "Liberty, with netlist" },
+                        "rtl":      { "type": "boolean", "description": "the netlist is the elaborated RTL (syn synthesize): read it by RTL register names, so an RTL constraint file applies" }
                     }
                 },
                 "assertion": {
@@ -319,7 +333,32 @@ fn opts<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
 /// constraint on `u_core/u_alu/…` names an object that exists. Flattening a flat netlist
 /// changes nothing. What flattening found (cells no library defines, kept names the file lacks)
 /// is an event.
+/// The netlist, flattened; with `--rtl` (check, write, diff), its RTL view (`rtl_view`).
 fn load_netlist(path: &str, args: &[String], lib: &Lib, sdc: &str) -> Result<Netlist, String> {
+    let nl = load_netlist_as_written(path, args, lib, sdc)?;
+    Ok(if args.iter().any(|a| a == "--rtl") { rtl_view(nl, path, lib, sdc) } else { nl })
+}
+
+/// The RTL view of an elaborated netlist: each register instance renamed to the RTL name on its
+/// stored-value output net, so an RTL constraint file's `[get_cells r]` / `[get_pins r/D]` name the
+/// register; everything else unchanged. A register left with its instance name is a warning (an
+/// RTL file cannot name it): `name-taken` (the name would not be unique) or
+/// `no-stored-value-output` (its stored-value output is not connected).
+fn rtl_view(nl: Netlist, path: &str, lib: &Lib, sdc: &str) -> Netlist {
+    let v = vyges_loom::sdc_rtl_map::rtl_view(&nl, lib);
+    for (inst, why) in &v.kept {
+        event(Severity_::Warn, "SDC-RTL-VIEW", format!("{path}: register {inst} keeps its instance name: {why}"), sdc);
+    }
+    event(
+        Severity_::Info,
+        "SDC-RTL-VIEW",
+        format!("{path}: RTL view: {} register(s) named by their RTL name, {} kept their instance name", v.renamed, v.kept.len()),
+        sdc,
+    );
+    v.netlist
+}
+
+fn load_netlist_as_written(path: &str, args: &[String], lib: &Lib, sdc: &str) -> Result<Netlist, String> {
     if std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
         return vyges_loom::yosys_json::load(path).map_err(|e| format!("{path}: {e}"));
     }
@@ -899,6 +938,10 @@ fn cmd_map(args: &[String]) -> i32 {
         eprintln!("vyges-sdc map: --sdc <rtl.sdc>, --netlist <elab.v> (with --lib) and --map <names.json> are required");
         return 2;
     };
+    if args.iter().any(|a| a == "--rtl") {
+        eprintln!("vyges-sdc map: --rtl is for check, write and diff; map reads the elaborated names itself");
+        return 2;
+    }
     let lib = match load_libs(&opts(args, "--lib")) {
         Ok(l) if !l.cells.is_empty() => l,
         Ok(_) => return fail(want_json, "map", sdc_path, "no cells in any --lib (the registers are found by their Liberty ff groups)"),
@@ -908,7 +951,7 @@ fn cmd_map(args: &[String]) -> i32 {
         Ok(m) => m,
         Err(e) => return fail(want_json, "map", sdc_path, &e),
     };
-    let elab = match load_netlist(nl_path, args, &lib, sdc_path) {
+    let elab = match load_netlist_as_written(nl_path, args, &lib, sdc_path) {
         Ok(n) => n,
         Err(e) => return fail(want_json, "map", sdc_path, &e),
     };
@@ -917,7 +960,7 @@ fn cmd_map(args: &[String]) -> i32 {
         Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
         None => Default::default(),
     };
-    let revised = match opt(args, "--revised").map(|p| load_netlist(p, args, &lib, sdc_path)) {
+    let revised = match opt(args, "--revised").map(|p| load_netlist_as_written(p, args, &lib, sdc_path)) {
         Some(Ok(n)) => Some(n),
         Some(Err(e)) => return fail(want_json, "map", sdc_path, &e),
         None => None,

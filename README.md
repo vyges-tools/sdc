@@ -26,16 +26,16 @@ export` writes them as another tool's waiver commands, by a template you supply.
 vyges physical sdc check --sdc design.sdc [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--metadata vyges-metadata.json]
                          [--define NAME=VALUE ...] [--waivers waivers.tcl]
-                         [--write-waivers new-waivers.tcl] [--fail-on-warning] [--json]
+                         [--write-waivers new-waivers.tcl] [--fail-on-warning] [--rtl] [--json]
                          [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc write --sdc design.sdc [-o|--out normalised.sdc]
                          [--netlist design.v --lib cells.lib [--lib ...]]
                          [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                         [--design NAME] [--partial] [--json] [-q|--quiet ...] [-v|--verbose ...]
+                         [--design NAME] [--partial] [--rtl] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc diff --sdc old.sdc --against new.sdc [--map names.json]
                         [--netlist design.v --lib cells.lib [--lib ...]]
                         [--top NAME] [--keep MODULE ...] [--define NAME=VALUE ...]
-                        [--json] [-q|--quiet ...] [-v|--verbose ...]
+                        [--rtl] [--json] [-q|--quiet ...] [-v|--verbose ...]
 vyges physical sdc map --sdc rtl.sdc --netlist elab.v --lib cells.lib [--lib ...]
                        --map names.json [--ranges ranges.json] [--revised impl.v]
                        [--top NAME] [--keep MODULE ...]
@@ -171,6 +171,22 @@ The exit code is 1 when there is any error. Warnings are reported and leave it a
   "findings": [
     { "severity": "warning", "code": "endpoint-coverage", "message": "endpoint coverage 50.0% — 1 of 2 constrained (1/1 registers clocked, 0/1 outputs with a delay)" },
     { "severity": "warning", "code": "unconstrained-output", "message": "output `dout` has no set_output_delay" } ] }
+```
+
+**Checking at RTL.** `check`, `write` and `diff` take `--rtl` when the netlist is the elaborated
+RTL (`vyges physical syn synthesize`): each register is read by its RTL name, the name on its
+stored-value output net (its instance `u12` becomes `cnt[0]`), and everything else is read as
+written. The constraint file written against the RTL is then checked against the RTL, before any
+implementation exists, with the same checks the gate-level netlist gets; the gate-level path is
+unchanged. Without `--rtl`, a query that reads the design, such as `get_pins -of_objects [get_cells
+{cnt[0]}]` or `get_cells -filter {ref_name =~ DFF*} {u_core.*}`, finds no cell of that name, and
+the command is reported as matching nothing and left out of what `write` writes. A register that cannot take its name keeps its instance name, with an `SDC-RTL-VIEW`
+warning saying why: `name-taken` (the name would not be unique) or `no-stored-value-output` (its
+stored-value output is not connected). `map` reads the elaborated names itself and does not take
+`--rtl`.
+
+```sh
+vyges physical sdc check --sdc rtl.sdc --netlist elab.v --lib cells.lib --rtl
 ```
 
 ### `write`
@@ -820,6 +836,8 @@ Every run leaves a `vyges-events` trail on stderr: JSONL when piped, text on a t
 - one `SDC-NOT-WRITTEN` per dropped command (for `diff`, per command not compared; for `map`, per
   command whose objects were not read);
 - one `SDC-DIFF-CHANGE` per change `diff` found, at warn when it loosens or is unknown, else info;
+- with `--rtl`, one `SDC-RTL-VIEW` summary (registers named by their RTL name, and kept) and one
+  per register that kept its instance name, with why;
 - one `SDC-MAP-BIT` per RTL bit index `map` translated by its declared range, one
   `SDC-MAP-ALIAS` per RTL name it matched by an alias, with the rules used, one
   `SDC-MAP-UNKNOWN` per pattern it found naming nothing (or indexing outside its declared range,

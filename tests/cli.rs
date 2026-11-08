@@ -207,7 +207,7 @@ fn help_documents_every_flag() {
     let help = sdc(&["--help"]).1;
     for f in [
         "--sdc", "--netlist", "--lib", "--metadata", "--fail-on-warning", "--out", "--design",
-        "--partial", "--map", "--revised", "--ranges", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
+        "--partial", "--map", "--revised", "--ranges", "--rtl", "--json", "--quiet", "--verbose", "--describe", "--bug-report",
         "--feature-request", "--sponsor", "--star", "VYGES_LOG", "VYGES_LOG_FORMAT", "EXIT STATUS",
     ] {
         assert!(help.contains(f), "{f}");
@@ -1094,6 +1094,49 @@ fn map_reports_an_ambiguous_alias_with_its_candidates() {
     let (_, text, _) = sdc(&a.iter().filter(|x| **x != "--json").copied().collect::<Vec<_>>());
     assert!(text.contains("ambiguous    get_cells u/t[0]"), "{text}");
     assert!(!text.contains("unknown      get_cells u/t[0]"), "{text}");
+}
+
+/// `check --rtl` reads the elaborated netlist by RTL register names (each register instance
+/// named by its stored-value output net, `u1` -> `s1`), so a query that reads the design over an
+/// RTL name resolves; without it, `[get_cells {s1}]` finds no cell and the exception matches
+/// nothing. `write --rtl` writes the command resolved to the register's pins.
+#[test]
+fn check_rtl_reads_registers_by_their_rtl_name() {
+    let dir = scratch("rtlview");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = format!("{dir}/q.sdc");
+    std::fs::write(
+        &f,
+        "create_clock -name clk -period 10 [get_ports clk]\n\
+         set_false_path -to [get_pins -of_objects [get_cells {s1}] -filter {direction == input}]\n",
+    )
+    .unwrap();
+    let base = ["--sdc", f.as_str(), "--netlist", "tests/data/rtl_map/elab.v", "--lib", "tests/data/rtl_map/cells.lib"];
+    let nothing = |v: &serde_json::Value| v["findings"].as_array().expect("findings").iter().filter(|x| x["code"] == "exception-matches-nothing").count();
+    let (_, out, err) = sdc(&[&["check", "--json"][..], &base].concat());
+    assert_eq!(nothing(&json(&out)), 1, "as written, no cell is named s1: {out}{err}");
+    let (_, out, err) = sdc(&[&["check", "--json", "--rtl"][..], &base].concat());
+    assert_eq!(nothing(&json(&out)), 0, "{out}{err}");
+    assert!(err.contains("RTL view: 2 register(s) named by their RTL name, 0 kept"), "{err}");
+    let (rc, out, _) = sdc(&[&["write", "--rtl"][..], &base].concat());
+    assert_eq!(rc, 0);
+    assert!(out.contains("set_false_path -to [get_pins {s1/CK s1/D}]"), "{out}");
+}
+
+/// A register that cannot take its RTL name keeps its instance name, with a warning that says
+/// why; and `map`, which reads the elaborated names itself, refuses `--rtl`.
+#[test]
+fn rtl_view_warns_on_a_register_it_cannot_name_and_map_refuses_it() {
+    let dir = scratch("rtlkept");
+    std::fs::create_dir_all(&dir).unwrap();
+    let nl = format!("{dir}/k.v");
+    std::fs::write(&nl, "module t(clk,a,y);\ninput clk,a; output y;\nwire r;\nDFF u1(.CK(clk),.D(a),.Q(r));\nDFF u2(.CK(clk),.D(a));\nINV u3(.A(r),.Y(y));\nendmodule\n").unwrap();
+    let (_, _, err) = sdc(&["check", "--sdc", "tests/data/rtl_map/carried.sdc", "--netlist", &nl, "--lib", "tests/data/rtl_map/cells.lib", "--rtl"]);
+    assert!(err.contains("register u2 keeps its instance name: no-stored-value-output"), "{err}");
+    assert!(err.contains("1 register(s) named by their RTL name, 1 kept"), "{err}");
+    let mut a = vec!["map", "--sdc", "tests/data/rtl_map/carried.sdc", "--rtl"];
+    a.extend(RTL_MAP);
+    assert_eq!(sdc(&a).0, 2);
 }
 
 /// An index outside the declared range is reported as such, never moved to a bit that exists.
