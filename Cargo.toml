@@ -1,6 +1,6 @@
 [package]
 name = "vyges-sdc"
-version = "0.1.53"
+version = "0.1.54"
 edition = "2021"
 description = "Loom engine: SDC constraint checking (completeness + consistency) and writing, over the vyges-loom SDC model"
 repository = "https://github.com/vyges-tools/sdc"
